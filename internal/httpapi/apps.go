@@ -17,7 +17,12 @@ type AppLister interface {
 	List(context.Context) (kube.ListResult, error)
 }
 
+type AppDeleter interface {
+	Delete(context.Context, string) (kube.DeleteResult, error)
+}
+
 type AppService interface {
+	AppDeleter
 	AppCreator
 	AppLister
 }
@@ -57,5 +62,26 @@ func createApp(creator AppCreator) http.HandlerFunc {
 }
 
 func invalidRequest(message string) *kube.AppError {
-	return &kube.AppError{Code: "invalid_request", Message: message, Details: kube.ErrorDetails{Namespace: kube.Namespace, Resources: &kube.CreateOutcomes{Deployment: kube.NotAttempted, Service: kube.NotAttempted}, Reason: "InvalidRequest"}}
+	return &kube.AppError{Code: "invalid_request", Message: message, Details: kube.ErrorDetails{Namespace: kube.Namespace, Resources: &kube.ResourceOutcomes{Deployment: kube.NotAttempted, Service: kube.NotAttempted}, Reason: "InvalidRequest"}}
+}
+
+func deleteApp(deleter AppDeleter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if !appName.MatchString(name) {
+			writeError(w, invalidRequest("Name must be 1 to 63 lowercase letters, digits or hyphens, starting with a letter and ending with a letter or digit"))
+			return
+		}
+		result, err := deleter.Delete(r.Context(), name)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if result.Resources.Deployment == kube.Absent && result.Resources.Service == kube.Absent {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Location", result.StatusURL)
+		writeJSON(w, http.StatusAccepted, result)
+	}
 }

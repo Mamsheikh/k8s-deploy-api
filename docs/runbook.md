@@ -95,7 +95,7 @@ Errors contain a stable code, a readable message, and resource outcomes. For exa
 {"error":{"code":"upstream_unavailable","message":"services is forbidden by policy","details":{"name":"learn-a","namespace":"deploy-api","resources":{"deployment":"created","service":"failed"},"reason":"Forbidden"}}}
 ```
 
-A single 10-second budget covers preflight reads and both sequential writes. The API checks both names before creating the Deployment, then creates the Service. It retains the Deployment if the Service fails. Outcomes are `created`, `failed` for a known server rejection, `unknown` for a write whose response was lost or timed out, and `not_attempted` when no write was issued. Internal errors also leave writes `unknown` because client-go can report the same error after an accepted write whose response cannot be decoded. Inspect both resources before retrying; a retry may return `409`. The API does not roll back or repair partial apps. Inspection and deletion endpoints follow in later PRs. Do not remove a colliding unmanaged resource.
+A single 10-second budget covers preflight reads and both sequential writes. The API checks both names before creating the Deployment, then creates the Service. It retains the Deployment if the Service fails. Outcomes are `created`, `failed` for a known server rejection, `unknown` for a write whose response was lost or timed out, and `not_attempted` when no write was issued. Internal errors also leave writes `unknown` because client-go can report the same error after an accepted write whose response cannot be decoded. Inspect both resources before retrying; a retry may return `409`. The API does not roll back or repair partial apps. The inspection endpoint follows in a later PR; deletion is described below. Do not remove a colliding unmanaged resource.
 
 Kubernetes absence returns `404`, conflicts return `409`, permission denial or unavailability returns `503`, upstream timeout returns `504`, and unexpected internal failures return `500`. Kubernetes reason/message details are preserved. Raw transport URLs and errors are not exposed.
 
@@ -106,6 +106,42 @@ go test ./internal/kube -run TestCreate -v
 go test ./internal/httpapi -run TestCreate -v
 go test . -run TestRun -v
 ```
+
+## Delete complete and partial applications
+
+```sh
+curl --fail-with-body -i -X DELETE http://127.0.0.1:8080/apps/learn-a
+kubectl --context=docker-desktop -n deploy-api get deployment,service,replicaset,pod \
+  -l 'app.kubernetes.io/managed-by=deploy-api,app.kubernetes.io/name=learn-a'
+kubectl --context=docker-desktop get namespace deploy-api
+```
+
+A valid name follows the same rules as creation. Deletion reads the Deployment and Service independently and checks both ownership labels, namespace, UID, and resourceVersion. Each DELETE carries the observed UID and resourceVersion as preconditions. A replacement object or an ownership change between the read and write returns `409` without deleting that changed resource. Missing identity metadata fails closed. A colliding unmanaged resource returns `409`; deletion still attempts the other managed resource.
+
+The response is `202` with `Location: /apps/learn-a` when either resource has an accepted deletion request or is already deleting. For example, deleting a Deployment-only app returns this JSON.
+
+```json
+{"name":"learn-a","namespace":"deploy-api","resources":{"deployment":"delete_requested","service":"absent"},"statusUrl":"/apps/learn-a"}
+```
+
+Deletion outcomes are `delete_requested`, `deleting`, and `absent`. A rejected write is `failed`; an uncertain write is `unknown`; a failed lookup or a resource rejected before writing is `not_attempted`. A missing resource, including a resource that disappears between GET and DELETE, is `absent`. Both resources absent returns a bodyless `204`, including repeated deletion after cleanup. The status URL reserves the future inspection endpoint. Use kubectl to inspect resources until that endpoint is implemented.
+
+A single 10-second budget covers both resource helpers. The Service helper runs after a Deployment lookup or write failure, subject to that same deadline. An error on either resource prevents `202`. Error details retain both outcomes and each resource's normalized code, message, and reason. For example, a Deployment conflict followed by a Service permission denial returns `503` with this shape.
+
+```json
+{"error":{"code":"upstream_unavailable","message":"services is forbidden by policy","details":{"failures":{"deployment":{"code":"conflict","message":"Deployment precondition conflict","reason":"Conflict"},"service":{"code":"upstream_unavailable","message":"services is forbidden by policy","reason":"Forbidden"}},"name":"learn-a","namespace":"deploy-api","resources":{"deployment":"failed","service":"failed"},"reason":"Forbidden"}}}
+```
+
+For mixed errors, timeout (`504`) takes precedence over unavailable or denied access (`503`), then internal errors (`500`), then conflicts (`409`). Equal-priority errors use the Deployment failure for the top-level code and message. Both resource failures remain in `details.failures`. Raw transport errors and URLs are sanitized. A timeout, disconnect, or undecodable DELETE response can follow an accepted deletion and is reported as `unknown`; inspect before retrying. A failed GET never implies a deletion was attempted.
+
+Deployment deletion explicitly requests background propagation. Kubernetes garbage collection removes owned ReplicaSets and Pods asynchronously. The API does not delete children or the namespace, and it does not wait for cleanup. A `202` response does not prove that dependent resources have disappeared.
+
+```sh
+go test ./internal/kube -run TestDelete -v
+go test ./internal/httpapi -run TestDelete -v
+```
+
+The default offline tests use fake clients for ownership and partial-operation branching. Controlled HTTP upstreams exercise the real typed client, validate UID and resourceVersion delete preconditions and background propagation, reject simulated concurrent replacements and ownership changes, and cover rejection, ambiguous responses, cancellation, and a shared deadline. These tests do not prove live garbage collection, survivor availability, or cleanup timing. Those require the explicit cluster checks in the implementation plan.
 
 ## List complete and partial applications
 
@@ -215,3 +251,17 @@ An initial unpaced restart batch encountered `address already in use` at iterati
 The rerunnable local verification script is `.scratch/task01-verification/verify_live.py`. It uses the binary path above, validates response bodies, checks process exit codes, and saves raw samples in `live-results.json`. Adjacent startup logs, routing results, inventory snapshots, and `initial-rapid-restart-conflict.log` retain both successful and failed observations. These local files are excluded from Git.
 
 `git init -b main` succeeded during verification. No remote was configured and no publication occurred. The plan's formal PR, independent-verifier, screenshot/video, and operator review gates remain open because no PR was requested or created.
+
+## PR-04 local verification
+
+Local verification passed on 2026-10-22 against Docker Desktop Kubernetes v1.34.1. `go test -count=1 -v ./...`, `go test -race -count=1 ./...`, `go vet ./...`, and `go build ./...` passed. `gofmt -l` returned no filenames and `git diff --check` passed. The independent native code review and comment audit found no source changes needed.
+
+The compiled API deleted ten isolated fixtures, including Deployment-only and Service-only applications, plus a surviving application after its HTTP availability was checked through a port-forward. Each accepted deletion converged to no Deployment, Service, ReplicaSet, or Pod for that app, and each repeat returned a bodyless `204`. A finalizer-held Service returned `202` with `deleting` on a repeat, then `204` after the fixture finalizer was removed. An unmanaged Service returned `409` and retained its UID. Namespace `deploy-api` remained, and the original workload inventory was restored. The API and all test port-forwards stopped cleanly.
+
+The fixture image was `docker.io/library/nginx@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5`, inspected for `linux/arm64` support before the run. Across eleven measured accepted deletions, the largest HTTP acceptance time was 77.80 ms and the largest acceptance-to-observed-cleanup time was 4.64 seconds. These are one local batch's absolute acceptance checks, below 11 and 180 seconds respectively. Trunk and PR-03 rejected DELETE for owned fixtures, so no equivalent deletion latency baseline or speedup is claimed. Compilation and image preparation were outside the timed DELETE requests. Registry, controller, scheduling, and polling costs affect these observations.
+
+Rerunnable local scripts, raw HTTP and kubectl transcripts, samples, binary and source hashes, and offline results are in the primary checkout's `.scratch/pr04/` directory. `verify_live.py` checks isolated fixture identity before cleanup and records `live-results.json`; `verify_offline.py` records `offline-results.json`. Go sources were unchanged between offline checks, binary compilation, and the live run.
+
+Formal cross-provider design and review coverage, the prescribed independent verification swarm, terminal screenshots, video, and operator review remain open. Claude failed authentication, Grok is not installed, and Computer Use refused Terminal access. Local verification does not claim the plan's formal clean verdict or authorize merging.
+
+The HTTP route adds `internal/httpapi/server.go` beyond PR-04's proposed file list. Dedicated `internal/kube/delete_test.go`, `internal/httpapi/delete_test.go`, and `internal/httpapi/delete_upstream_test.go` keep deletion checks separate. Existing creation test files migrate to the shared `ResourceOutcome` and `ResourceOutcomes` names and add the required test-service method. Creation JSON remains unchanged.
