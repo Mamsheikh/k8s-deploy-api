@@ -101,3 +101,7 @@ func TestDeleteHTTPErrorMapping(t *testing.T) {
 		t.Fatalf("response = %d %s", w.Code, w.Body)
 	}
 }
+
+func (f deleterFunc) Inspect(context.Context, string) (kube.InspectResult, error) {
+	return kube.InspectResult{}, nil
+}

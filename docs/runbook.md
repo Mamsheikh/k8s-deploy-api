@@ -76,7 +76,7 @@ Expect `202`, `Location: /apps/learn-a`, and this JSON shape.
 {"name":"learn-a","namespace":"deploy-api","deployment":"learn-a","service":"learn-a","statusUrl":"/apps/learn-a"}
 ```
 
-Acceptance means both resource writes succeeded. Kubernetes creates ReplicaSets and Pods afterward. The response does not wait for readiness. The status URL reserves the future inspection endpoint; GET inspection is not implemented yet. Use kubectl to observe this slice.
+Acceptance means both resource writes succeeded. Kubernetes creates ReplicaSets and Pods afterward. The response does not wait for readiness. The status URL returns configuration and diagnostics through `GET /apps/{name}`. Application `ready` remains conservatively false until PR-06 adds the rollout readiness predicate.
 
 ```sh
 kubectl --context=docker-desktop -n deploy-api get deployment learn-a -o yaml
@@ -252,6 +252,26 @@ The rerunnable local verification script is `.scratch/task01-verification/verify
 
 `git init -b main` succeeded during verification. No remote was configured and no publication occurred. The plan's formal PR, independent-verifier, screenshot/video, and operator review gates remain open because no PR was requested or created.
 
+## Inspect an application
+
+Read the desired configuration and current Kubernetes diagnostics.
+
+```sh
+curl --fail-with-body http://127.0.0.1:8080/apps/learn-a
+kubectl --context=docker-desktop -n deploy-api get deployment,service learn-a -o yaml
+kubectl --context=docker-desktop -n deploy-api get replicasets,pods -l app.kubernetes.io/name=learn-a -o yaml
+```
+
+The JSON contains `name`, `namespace`, `resources`, `ready`, and `pods`. `resources` reports Deployment and Service presence independently. Deployment-only and Service-only apps return `200`. A Service-only app omits `image`, `containerPort`, and `deployment` because its requested container configuration is unknown. An absent app returns `404`. An unmanaged resource with that name returns `409`.
+
+When a Deployment exists, `image` and `containerPort` come from its named `app` container. `deployment` includes generation, observed generation, desired and total replica counts, updated, ready, and available replica counts, and raw conditions. Both resource diagnostics expose deletion timestamps when set.
+
+Pods are sorted by name and must match both app labels and the controller UID chain from the current Deployment through a ReplicaSet. Matching labels alone do not establish membership. Terminating owned Pods remain visible with their deletion timestamps.
+
+Each Pod includes its phase and Pod readiness. Its optional `container` object projects the named `app` container status. This includes the reported image, image ID, readiness, restart count, current `state`, and `lastTerminationState`. Waiting and terminated states preserve Kubernetes reasons and messages. Previous termination includes the exit code, including zero. A Pod without container status omits `container`; an unreported state is an empty object.
+
+In PR-05, application `ready` is always `false`, even when the Pod and Deployment report healthy replicas. PR-06 adds the complete rollout predicate. Warning events arrive in PR-07. Inspection does not wait for rollout, and all required Kubernetes reads share one 10-second operation deadline. Required read failures return errors instead of an incomplete success response.
+
 ## PR-04 local verification
 
 Local verification passed on 2026-10-22 against Docker Desktop Kubernetes v1.34.1. `go test -count=1 -v ./...`, `go test -race -count=1 ./...`, `go vet ./...`, and `go build ./...` passed. `gofmt -l` returned no filenames and `git diff --check` passed. The independent native code review and comment audit found no source changes needed.
@@ -265,3 +285,19 @@ Rerunnable local scripts, raw HTTP and kubectl transcripts, samples, binary and 
 Formal cross-provider design and review coverage, the prescribed independent verification swarm, terminal screenshots, video, and operator review remain open. Claude failed authentication, Grok is not installed, and Computer Use refused Terminal access. Local verification does not claim the plan's formal clean verdict or authorize merging.
 
 The HTTP route adds `internal/httpapi/server.go` beyond PR-04's proposed file list. Dedicated `internal/kube/delete_test.go`, `internal/httpapi/delete_test.go`, and `internal/httpapi/delete_upstream_test.go` keep deletion checks separate. Existing creation test files migrate to the shared `ResourceOutcome` and `ResourceOutcomes` names and add the required test-service method. Creation JSON remains unchanged.
+
+## PR-05 local verification
+
+Local checks passed on 2026-10-22 with Go `1.26.0` and Docker Desktop Kubernetes `v1.34.1`. `go test -count=1 -v ./...`, `go test -race -count=1 ./...`, `go vet ./...`, and `go build ./...` passed. `gofmt -l` returned no filenames, and `git diff --check` passed. Independent native review found no code defects. Its comment audit found no added source comments or suppressions.
+
+Offline tests cover complete and partial apps, absence, unmanaged collisions, Deployment conditions and counts, deleting resources, missing status, waiting, running, terminated, and previous termination states. Ownership tests exclude Pods with matching labels but no controller, wrong labels, old Deployment or ReplicaSet UIDs, noncontroller references, and wrong owner names or kinds. Typed HTTP upstream tests exercise all four required reads, error mapping, credential-safe transport errors, cancellation at every read, and the shared ordinary deadline.
+
+The compiled API created three isolated live fixtures using the inspected arm64 image `docker.io/library/nginx@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5`. Complete, Deployment-only, and Service-only inspections returned `200`. An absent app returned `404`. Deployment configuration, generation, conditions, replica counts, Pod phase and readiness, and container state matched captured Kubernetes objects. A separate Pod with matching app labels and no ownership chain was excluded. All three app shapes remained inspectable after restarting the API. Fixture cleanup checked resource UIDs, preserved the original workload inventory, retained the namespace, and stopped the API.
+
+The latency check used five alternating batches of 20 requests per revision against the same controlled upstream dataset of 20 ReplicaSets and 20 Pods. All 100 head inspections returned 20 owned Pods and used four upstream reads. Their p95 was 402.43 ms, below the proposed 500 ms absolute budget. All 100 health requests per revision succeeded. Parent commit `45e1531` returned `405` for all inspection requests because it lacks that endpoint. This is an acceptance observation with the default client-go transport and rate limits, not a speedup comparison. Twenty additional real-cluster inspection samples succeeded within the 11-second operation budget. The largest of all 22 complete-app reads, including comparison and restart checks, took 413.87 ms on this shared Mac.
+
+Rerunnable scripts and raw evidence live in the primary checkout's ignored `.scratch/pr05/` directory. `verify_live.py` records HTTP responses, kubectl objects, cleanup, and timings in `live-results.json`. `verify_controlled.py` records its dataset, upstream requests, baseline responses, and samples in `controlled-results.json`. Offline command logs, race output, and source hashes are retained beside them.
+
+The default Grok writer did not start because its CLI is unavailable. The parent implemented this slice with independent native design and code review. Cross-provider design and adversarial review, the prescribed ten-worker swarm, trunk performance baseline, screenshots, video, CI, and operator merge review remain open. Local checks do not claim the plan's formal clean verdict. This delivery stages, commits, and pushes the feature branch without merging.
+
+The route also changes `internal/httpapi/server.go`, and `internal/httpapi/delete_test.go` gains the inspection method on its existing test service. Dedicated HTTP inspection and typed-upstream test files keep the new checks separate from creation tests. These are file-boundary adjustments to PR-05's proposed paths.

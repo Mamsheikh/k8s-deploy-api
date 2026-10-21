@@ -134,3 +134,7 @@ func TestCreateErrorMapping(t *testing.T) {
 func (f creatorFunc) Delete(context.Context, string) (kube.DeleteResult, error) {
 	return kube.DeleteResult{}, nil
 }
+
+func (f creatorFunc) Inspect(context.Context, string) (kube.InspectResult, error) {
+	return kube.InspectResult{}, nil
+}

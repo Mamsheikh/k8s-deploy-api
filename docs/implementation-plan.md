@@ -333,34 +333,36 @@ Implementation and offline checks are complete. Parent-run cluster and controlle
 
 ## Inspect resource presence and owned Pod diagnostics (PR-05)
 
+Source and local offline, live inspection, restart, and controlled latency checks passed on 2026-10-22. See [the runbook](runbook.md#pr-05-local-verification). Formal independent swarm, cross-provider, and media-review gates remain open.
+
 **Depends on.** PR-03. Deliver after PR-04 for cleanup support.
 
 **Files.**
 
-- [ ] Create or edit `internal/kube/inspect.go`.
-- [ ] Create or edit `internal/kube/ownership.go`.
-- [ ] Create or edit `internal/kube/inspect_test.go`.
-- [ ] Create or edit `internal/kube/ownership_test.go`.
-- [ ] Create or edit `internal/httpapi/apps.go`.
-- [ ] Create or edit `internal/httpapi/apps_test.go`.
-- [ ] Create or edit `docs/runbook.md`.
+- [x] Create or edit `internal/kube/inspect.go`.
+- [x] Create or edit `internal/kube/ownership.go`.
+- [x] Create or edit `internal/kube/inspect_test.go`.
+- [x] Create or edit `internal/kube/ownership_test.go`.
+- [x] Create or edit `internal/httpapi/apps.go`.
+- [x] Create or edit `internal/httpapi/apps_test.go`.
+- [x] Create or edit `docs/runbook.md`.
 
 **Build.**
 
-- [ ] Implement GET /apps/{name} configuration, presence, Deployment generations/counts/conditions, and Pod/container state projection.
-- [ ] Resolve Deployment to ReplicaSet to Pod membership by UID and labels. Share the ownership resolver with the later log endpoint.
-- [ ] Expose deletion timestamps, actual image, readiness, waiting/running/terminated reasons, restart counts, and last exit code/reason. Handle absent optional fields.
-- [ ] Return 404 only if neither managed resource exists. Return partial apps with ready=false. Keep ready=false conservatively in this PR until PR-06 implements the full predicate. Document this temporary response behavior explicitly.
+- [x] Implement GET /apps/{name} configuration, presence, Deployment generations/counts/conditions, and Pod/container state projection.
+- [x] Resolve Deployment to ReplicaSet to Pod membership by UID and labels. Share the ownership resolver with the later log endpoint.
+- [x] Expose deletion timestamps, actual image, readiness, waiting/running/terminated reasons, restart counts, and last exit code/reason. Handle absent optional fields.
+- [x] Return 404 only if neither managed resource exists. Return partial apps with ready=false. Keep ready=false conservatively in this PR until PR-06 implements the full predicate. Document this temporary response behavior explicitly.
 
 **You see.**
 
-- [ ] Inspection explains resource and container state using the same owned objects visible in kubectl. Ready remains conservatively false until PR-06. Save HTTP transcripts and matching Kubernetes evidence.
+- [x] Inspection explains resource and container state using the same owned objects visible in kubectl. Ready remains conservatively false until PR-06. Save HTTP transcripts and matching Kubernetes evidence.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Test complete and partial apps, absent resources, ownership UID mismatches, matching labels without ownership, replaced ReplicaSets, deleting Pods, optional states, and previous termination.
-- [ ] Test all required reads under one deadline and errors rather than misleading missing-app responses.
-- [ ] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
+- [x] Test complete and partial apps, absent resources, ownership UID mismatches, matching labels without ownership, replaced ReplicaSets, deleting Pods, optional states, and previous termination.
+- [x] Test all required reads under one deadline and errors rather than misleading missing-app responses.
+- [x] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` role at the PR head, per the boot recipe.
 

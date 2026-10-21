@@ -21,7 +21,12 @@ type AppDeleter interface {
 	Delete(context.Context, string) (kube.DeleteResult, error)
 }
 
+type AppInspector interface {
+	Inspect(context.Context, string) (kube.InspectResult, error)
+}
+
 type AppService interface {
+	AppInspector
 	AppDeleter
 	AppCreator
 	AppLister
@@ -83,5 +88,21 @@ func deleteApp(deleter AppDeleter) http.HandlerFunc {
 		}
 		w.Header().Set("Location", result.StatusURL)
 		writeJSON(w, http.StatusAccepted, result)
+	}
+}
+
+func inspectApp(inspector AppInspector) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if !appName.MatchString(name) {
+			writeError(w, invalidRequest("Name must be 1 to 63 lowercase letters, digits or hyphens, starting with a letter and ending with a letter or digit"))
+			return
+		}
+		result, err := inspector.Inspect(r.Context(), name)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	}
 }
