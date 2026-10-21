@@ -88,7 +88,7 @@ func TestCreateCollisionDoesNotWrite(t *testing.T) {
 				client := fake.NewClientset(object)
 				_, err := (Apps{Client: client}).Create(context.Background(), AppSpec{Name: meta.Name, Image: "nginx", ContainerPort: 80})
 				var appErr *AppError
-				if !errors.As(err, &appErr) || appErr.Code != "conflict" || appErr.Details.Resources != (CreateOutcomes{NotAttempted, NotAttempted}) {
+				if !errors.As(err, &appErr) || appErr.Code != "conflict" || *appErr.Details.Resources != (CreateOutcomes{NotAttempted, NotAttempted}) {
 					t.Fatalf("error = %#v", err)
 				}
 				for _, action := range client.Actions() {
@@ -127,7 +127,7 @@ func TestCreateWriteFailures(t *testing.T) {
 			if tc.resource == "deployments" {
 				want = CreateOutcomes{tc.outcome, NotAttempted}
 			}
-			if appErr.Details.Resources != want {
+			if *appErr.Details.Resources != want {
 				t.Fatalf("outcomes = %#v, want %#v", appErr.Details.Resources, want)
 			}
 			if strings.Contains(appErr.Message, "secret") || strings.Contains(appErr.Message, "password") {
@@ -154,7 +154,7 @@ func TestCreatePreflightFailures(t *testing.T) {
 			})
 			_, err := (Apps{Client: client}).Create(context.Background(), AppSpec{Name: "demo", Image: "nginx", ContainerPort: 80})
 			var appErr *AppError
-			if !errors.As(err, &appErr) || appErr.Details.Resources != (CreateOutcomes{NotAttempted, NotAttempted}) || !strings.Contains(appErr.Message, "access denied") {
+			if !errors.As(err, &appErr) || *appErr.Details.Resources != (CreateOutcomes{NotAttempted, NotAttempted}) || !strings.Contains(appErr.Message, "access denied") {
 				t.Fatalf("error = %#v", err)
 			}
 			for _, action := range client.Actions() {
@@ -183,7 +183,7 @@ func TestCreateCancellationLeavesUnissuedWritesNotAttempted(t *testing.T) {
 			if afterDeployment {
 				want.Deployment = Created
 			}
-			if !errors.As(err, &appErr) || appErr.Code != "upstream_unavailable" || appErr.Details.Resources != want {
+			if !errors.As(err, &appErr) || appErr.Code != "upstream_unavailable" || *appErr.Details.Resources != want {
 				t.Fatalf("error = %#v, want outcomes %#v", err, want)
 			}
 			for _, action := range client.Actions() {
