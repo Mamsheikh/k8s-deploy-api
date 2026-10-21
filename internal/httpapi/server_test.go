@@ -9,7 +9,7 @@ import (
 
 func TestHealth(t *testing.T) {
 	w := httptest.NewRecorder()
-	NewHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	NewHandler(nil).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
@@ -31,8 +31,7 @@ func TestRouting(t *testing.T) {
 		path   string
 		status int
 	}{
-		{http.MethodGet, "/apps", http.StatusNotFound},
-		{http.MethodPost, "/apps", http.StatusNotFound},
+		{http.MethodGet, "/apps", http.StatusMethodNotAllowed},
 		{http.MethodGet, "/healthz/extra", http.StatusNotFound},
 		{http.MethodGet, "/", http.StatusNotFound},
 		{http.MethodPost, "/healthz", http.StatusMethodNotAllowed},
@@ -42,12 +41,18 @@ func TestRouting(t *testing.T) {
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			NewHandler().ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			NewHandler(nil).ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
 			if w.Code != tc.status {
 				t.Errorf("status = %d, want %d", w.Code, tc.status)
 			}
-			if tc.status == http.StatusMethodNotAllowed && w.Header().Get("Allow") != "GET, HEAD" {
-				t.Errorf("Allow = %q, want GET, HEAD", w.Header().Get("Allow"))
+			if tc.status == http.StatusMethodNotAllowed {
+				allow := "GET, HEAD"
+				if tc.path == "/apps" {
+					allow = "POST"
+				}
+				if w.Header().Get("Allow") != allow {
+					t.Errorf("Allow = %q, want %q", w.Header().Get("Allow"), allow)
+				}
 			}
 		})
 	}

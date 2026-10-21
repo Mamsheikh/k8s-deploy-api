@@ -145,6 +145,8 @@ Local unit, race, build, vet, live startup, restart, and absolute timing checks 
 
 ## Create a named Deployment and Service (PR-02)
 
+Source and local unit, race, live creation, Service access, and acceptance-budget checks now exist. See [the runbook](runbook.md#pr-02-verification-status). The formal independent swarm and media-review gates remain open. Local checks do not replace those gates.
+
 **Depends on.** PR-01.
 
 **Files.**
