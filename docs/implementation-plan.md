@@ -213,29 +213,31 @@ Source and local unit, race, live creation, Service access, and acceptance-budge
 
 **Depends on.** PR-02.
 
+Implementation and offline checks are complete. Parent-run cluster and controlled-upstream evidence is recorded in [the runbook](runbook.md#pr-03-verification-status). The formal ten-worker and media gates below remain open.
+
 **Files.**
 
-- [ ] Create or edit `internal/kube/apps.go`.
-- [ ] Create or edit `internal/kube/apps_test.go`.
-- [ ] Create or edit `internal/httpapi/apps.go`.
-- [ ] Create or edit `internal/httpapi/apps_test.go`.
-- [ ] Create or edit `docs/runbook.md`.
+- [x] Create or edit `internal/kube/apps.go`.
+- [x] Create or edit `internal/kube/apps_test.go`.
+- [x] Create or edit `internal/httpapi/apps.go`.
+- [x] Create or edit `internal/httpapi/apps_test.go`.
+- [x] Create or edit `docs/runbook.md`.
 
 **Build.**
 
-- [ ] Add GET /apps as the sorted union of managed Deployment and Service names with presence flags.
-- [ ] Use both managed labels where appropriate. Exclude unmanaged objects and avoid an in-memory app registry.
-- [ ] Treat required list failures as upstream errors. Never return an empty successful result for an unavailable cluster.
+- [x] Add GET /apps as the sorted union of managed Deployment and Service names with presence flags.
+- [x] Use both managed labels where appropriate. Exclude unmanaged objects and avoid an in-memory app registry.
+- [x] Treat required list failures as upstream errors. Never return an empty successful result for an unavailable cluster.
 
 **You see.**
 
-- [ ] Complete, Deployment-only, and Service-only apps remain discoverable after API restart. Save HTTP transcripts and matching Kubernetes evidence.
+- [x] Complete, Deployment-only, and Service-only apps remain discoverable after API restart. Save HTTP transcripts and matching Kubernetes evidence.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Test sorted unions, empty lists, duplicates across kinds, both partial shapes, unmanaged objects, and required read failure.
-- [ ] Reuse retained partial-create state from PR-02 in a create-then-list test. Assert no registry is needed after server reconstruction.
-- [ ] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
+- [x] Test sorted unions, empty lists, duplicates across kinds, both partial shapes, unmanaged objects, and required read failure.
+- [x] Reuse retained partial-create state from PR-02 in a create-then-list test. Assert no registry is needed after server reconstruction.
+- [x] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` role at the PR head, per the boot recipe.
 
@@ -331,34 +333,36 @@ Source and local unit, race, live creation, Service access, and acceptance-budge
 
 ## Inspect resource presence and owned Pod diagnostics (PR-05)
 
+Source and local offline, live inspection, restart, and controlled latency checks passed on 2026-10-22. See [the runbook](runbook.md#pr-05-local-verification). Formal independent swarm, cross-provider, and media-review gates remain open.
+
 **Depends on.** PR-03. Deliver after PR-04 for cleanup support.
 
 **Files.**
 
-- [ ] Create or edit `internal/kube/inspect.go`.
-- [ ] Create or edit `internal/kube/ownership.go`.
-- [ ] Create or edit `internal/kube/inspect_test.go`.
-- [ ] Create or edit `internal/kube/ownership_test.go`.
-- [ ] Create or edit `internal/httpapi/apps.go`.
-- [ ] Create or edit `internal/httpapi/apps_test.go`.
-- [ ] Create or edit `docs/runbook.md`.
+- [x] Create or edit `internal/kube/inspect.go`.
+- [x] Create or edit `internal/kube/ownership.go`.
+- [x] Create or edit `internal/kube/inspect_test.go`.
+- [x] Create or edit `internal/kube/ownership_test.go`.
+- [x] Create or edit `internal/httpapi/apps.go`.
+- [x] Create or edit `internal/httpapi/apps_test.go`.
+- [x] Create or edit `docs/runbook.md`.
 
 **Build.**
 
-- [ ] Implement GET /apps/{name} configuration, presence, Deployment generations/counts/conditions, and Pod/container state projection.
-- [ ] Resolve Deployment to ReplicaSet to Pod membership by UID and labels. Share the ownership resolver with the later log endpoint.
-- [ ] Expose deletion timestamps, actual image, readiness, waiting/running/terminated reasons, restart counts, and last exit code/reason. Handle absent optional fields.
-- [ ] Return 404 only if neither managed resource exists. Return partial apps with ready=false. Keep ready=false conservatively in this PR until PR-06 implements the full predicate. Document this temporary response behavior explicitly.
+- [x] Implement GET /apps/{name} configuration, presence, Deployment generations/counts/conditions, and Pod/container state projection.
+- [x] Resolve Deployment to ReplicaSet to Pod membership by UID and labels. Share the ownership resolver with the later log endpoint.
+- [x] Expose deletion timestamps, actual image, readiness, waiting/running/terminated reasons, restart counts, and last exit code/reason. Handle absent optional fields.
+- [x] Return 404 only if neither managed resource exists. Return partial apps with ready=false. Keep ready=false conservatively in this PR until PR-06 implements the full predicate. Document this temporary response behavior explicitly.
 
 **You see.**
 
-- [ ] Inspection explains resource and container state using the same owned objects visible in kubectl. Ready remains conservatively false until PR-06. Save HTTP transcripts and matching Kubernetes evidence.
+- [x] Inspection explains resource and container state using the same owned objects visible in kubectl. Ready remains conservatively false until PR-06. Save HTTP transcripts and matching Kubernetes evidence.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Test complete and partial apps, absent resources, ownership UID mismatches, matching labels without ownership, replaced ReplicaSets, deleting Pods, optional states, and previous termination.
-- [ ] Test all required reads under one deadline and errors rather than misleading missing-app responses.
-- [ ] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
+- [x] Test complete and partial apps, absent resources, ownership UID mismatches, matching labels without ownership, replaced ReplicaSets, deleting Pods, optional states, and previous termination.
+- [x] Test all required reads under one deadline and errors rather than misleading missing-app responses.
+- [x] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` role at the PR head, per the boot recipe.
 

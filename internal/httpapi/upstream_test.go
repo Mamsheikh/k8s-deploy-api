@@ -30,7 +30,7 @@ func TestCreateThroughTypedUpstream(t *testing.T) {
 		code             int
 		reason           metav1.StatusReason
 		wantStatus       int
-		wantOutcome      kube.CreateOutcome
+		wantOutcome      kube.ResourceOutcome
 		acceptedResponse string
 	}{
 		{"service forbidden", 403, metav1.StatusReasonForbidden, 503, kube.Failed, ""},
@@ -104,7 +104,7 @@ func TestCreateThroughTypedUpstream(t *testing.T) {
 			if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 				t.Fatal(err)
 			}
-			if response.StatusCode != tc.wantStatus || response.Header.Get("Location") != "" || envelope.Error.Details.Resources != (kube.CreateOutcomes{Deployment: kube.Created, Service: tc.wantOutcome}) {
+			if response.StatusCode != tc.wantStatus || response.Header.Get("Location") != "" || *envelope.Error.Details.Resources != (kube.ResourceOutcomes{Deployment: kube.Created, Service: tc.wantOutcome}) {
 				t.Fatalf("response = %d %#v", response.StatusCode, envelope)
 			}
 			if tc.code >= 400 && (envelope.Error.Details.Reason != string(tc.reason) || envelope.Error.Message != "controlled Kubernetes rejection") {
@@ -191,7 +191,7 @@ func TestCreateSharesDeadlineAndCancelsUpstream(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != 504 || envelope.Error.Details.Resources != (kube.CreateOutcomes{Deployment: kube.Created, Service: kube.Unknown}) {
+	if response.StatusCode != 504 || *envelope.Error.Details.Resources != (kube.ResourceOutcomes{Deployment: kube.Created, Service: kube.Unknown}) {
 		t.Fatalf("response = %d %#v", response.StatusCode, envelope)
 	}
 	select {

@@ -21,6 +21,10 @@ func (f creatorFunc) Create(ctx context.Context, spec kube.AppSpec) (kube.Create
 	return f(ctx, spec)
 }
 
+func (f creatorFunc) List(context.Context) (kube.ListResult, error) {
+	return kube.ListResult{Apps: []kube.AppSummary{}}, nil
+}
+
 func TestCreateValidation(t *testing.T) {
 	cases := []string{
 		``, `{`, `null`, `[]`, `"text"`, `1`, `true`,
@@ -110,7 +114,7 @@ func TestCreateErrorMapping(t *testing.T) {
 	}{{"invalid_request", 400}, {"not_found", 404}, {"conflict", 409}, {"upstream_unavailable", 503}, {"upstream_timeout", 504}, {"internal_error", 500}} {
 		t.Run(tc.code, func(t *testing.T) {
 			handler := NewHandler(creatorFunc(func(context.Context, kube.AppSpec) (kube.CreateResult, error) {
-				return kube.CreateResult{}, &kube.AppError{Code: tc.code, Message: "useful failure", Details: kube.ErrorDetails{Reason: "TestReason", Resources: kube.CreateOutcomes{Deployment: kube.Created, Service: kube.Failed}}}
+				return kube.CreateResult{}, &kube.AppError{Code: tc.code, Message: "useful failure", Details: kube.ErrorDetails{Reason: "TestReason", Resources: &kube.ResourceOutcomes{Deployment: kube.Created, Service: kube.Failed}}}
 			}))
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/apps", strings.NewReader(`{"name":"demo","image":"nginx","containerPort":80}`)))
@@ -125,4 +129,12 @@ func TestCreateErrorMapping(t *testing.T) {
 	if w.Code != 500 || strings.Contains(string(body), "secret") {
 		t.Fatalf("response = %d %s", w.Code, body)
 	}
+}
+
+func (f creatorFunc) Delete(context.Context, string) (kube.DeleteResult, error) {
+	return kube.DeleteResult{}, nil
+}
+
+func (f creatorFunc) Inspect(context.Context, string) (kube.InspectResult, error) {
+	return kube.InspectResult{}, nil
 }
