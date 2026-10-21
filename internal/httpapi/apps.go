@@ -1,0 +1,41 @@
+package httpapi
+
+import (
+	"context"
+	"net/http"
+	"regexp"
+	"strings"
+
+	"k8s-deploy-api/internal/kube"
+)
+
+type AppCreator interface {
+	Create(context.Context, kube.AppSpec) (kube.CreateResult, error)
+}
+
+var appName = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+func createApp(creator AppCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var spec kube.AppSpec
+		if err := decodeObject(r.Body, &spec); err != nil {
+			writeError(w, invalidRequest("Body must be one JSON object with only name, image, and integer containerPort"))
+			return
+		}
+		if !appName.MatchString(spec.Name) || strings.TrimSpace(spec.Image) == "" || spec.ContainerPort < 1 || spec.ContainerPort > 65535 {
+			writeError(w, invalidRequest("Name must be 1 to 63 lowercase letters, digits or hyphens, starting with a letter and ending with a letter or digit; image must be nonempty; containerPort must be an integer from 1 to 65535"))
+			return
+		}
+		result, err := creator.Create(r.Context(), spec)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		w.Header().Set("Location", result.StatusURL)
+		writeJSON(w, http.StatusAccepted, result)
+	}
+}
+
+func invalidRequest(message string) *kube.AppError {
+	return &kube.AppError{Code: "invalid_request", Message: message, Details: kube.ErrorDetails{Namespace: kube.Namespace, Resources: kube.CreateOutcomes{Deployment: kube.NotAttempted, Service: kube.NotAttempted}, Reason: "InvalidRequest"}}
+}

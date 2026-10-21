@@ -1,6 +1,6 @@
-# Run the connection and health foundation
+# Run the local application creation API
 
-This slice starts a local HTTP process after two read-only Kubernetes checks. It fetches the server version and gets namespace `deploy-api` under one overall 10-second deadline. Health confirms that the HTTP process is serving. It does not recheck Kubernetes.
+The API starts a local HTTP process after two read-only Kubernetes checks. It fetches the server version and gets namespace `deploy-api` under one overall 10-second deadline. Health confirms that the HTTP process is serving. It does not recheck Kubernetes.
 
 ## Prepare dependencies and the namespace
 
@@ -55,9 +55,80 @@ curl -i -X POST http://127.0.0.1:8080/healthz
 curl -i http://127.0.0.1:8080/apps
 ```
 
-Expect `200`, `Content-Type: application/json`, and `{"status":"ok"}` for the first request. Expect `405` for the second and `404` for the third. Application endpoints are not implemented in this slice.
+Expect `200`, `Content-Type: application/json`, and `{"status":"ok"}` for the first request. Expect `405` for the second and third. The third response allows `POST`; application listing follows in PR-03.
 
 Press Ctrl-C in the API terminal to release the port. Restart and repeat the health request.
+
+## Create an application
+
+Verify the intended public image has `linux/arm64` support before sending it. Record its immutable digest for repeatable cluster exercises. The API accepts the reference as supplied and does not inspect the registry.
+
+```sh
+docker buildx imagetools inspect docker.io/library/nginx:stable-alpine
+curl --fail-with-body -i -H 'Content-Type: application/json' \
+  -d '{"name":"learn-a","image":"docker.io/library/nginx:stable-alpine","containerPort":80}' \
+  http://127.0.0.1:8080/apps
+```
+
+Expect `202`, `Location: /apps/learn-a`, and this JSON shape.
+
+```json
+{"name":"learn-a","namespace":"deploy-api","deployment":"learn-a","service":"learn-a","statusUrl":"/apps/learn-a"}
+```
+
+Acceptance means both resource writes succeeded. Kubernetes creates ReplicaSets and Pods afterward. The response does not wait for readiness. The status URL reserves the future inspection endpoint; GET inspection is not implemented in PR-02. Use kubectl to observe this slice.
+
+```sh
+kubectl --context=docker-desktop -n deploy-api get deployment learn-a -o yaml
+kubectl --context=docker-desktop -n deploy-api get service learn-a -o yaml
+kubectl --context=docker-desktop -n deploy-api rollout status deployment/learn-a --timeout=180s
+kubectl --context=docker-desktop -n deploy-api port-forward service/learn-a 8081:80
+```
+
+Keep forwarding open and run `curl --fail http://127.0.0.1:8081/` in another terminal. Create a second app with a different name and forward its Service to a different local port to check isolation. Resource labels and selectors include both `app.kubernetes.io/managed-by=deploy-api` and `app.kubernetes.io/name=<name>`. Each container gets requests of CPU `100m` and memory `64Mi`, and limits of CPU `500m` and memory `128Mi`.
+
+Bodies must be exactly one JSON object containing name, image, and integer containerPort. Unknown fields, null or array bodies, trailing values, invalid names, empty images, and ports outside 1 to 65535 return `400` before any Kubernetes requests. Existing Deployments or Services return `409`, including unmanaged resources. Neither existing resource is replaced.
+
+Errors contain a stable code, a readable message, and resource outcomes. For example, a controlled Kubernetes denial after Deployment creation returns `503` with this shape.
+
+```json
+{"error":{"code":"upstream_unavailable","message":"services is forbidden by policy","details":{"name":"learn-a","namespace":"deploy-api","resources":{"deployment":"created","service":"failed"},"reason":"Forbidden"}}}
+```
+
+A single 10-second budget covers preflight reads and both sequential writes. The API checks both names before creating the Deployment, then creates the Service. It retains the Deployment if the Service fails. Outcomes are `created`, `failed` for a known server rejection, `unknown` for a write whose response was lost or timed out, and `not_attempted` when no write was issued. Internal errors also leave writes `unknown` because client-go can report the same error after an accepted write whose response cannot be decoded. Inspect both resources before retrying; a retry may return `409`. The API does not roll back or repair partial apps. Listing, inspection, and deletion endpoints follow in later PRs. Do not remove a colliding unmanaged resource.
+
+Kubernetes absence returns `404`, conflicts return `409`, permission denial or unavailability returns `503`, upstream timeout returns `504`, and unexpected internal failures return `500`. Kubernetes reason/message details are preserved. Raw transport URLs and errors are not exposed.
+
+The offline tests use fake clients for resource intent and real typed clients against controlled HTTP upstreams for sequential requests, Service rejection, disconnects, and shared deadlines.
+
+```sh
+go test ./internal/kube -run TestCreate -v
+go test ./internal/httpapi -run TestCreate -v
+go test . -run TestRun -v
+```
+
+## PR-02 verification status
+
+Local verification ran on 2026-10-21 against Docker Desktop Kubernetes `v1.34.1`, using Go `1.26.0`. The namespace was already present. Default tests remain offline.
+
+Ten live applications returned `202` with the expected Location and response body. Their Deployments and Services matched the required labels, selectors, probe, rolling settings, pull policy, ports, and resource budgets. All ten rolled out and served nginx through their own Services. Managed duplicates returned `409` with unchanged UIDs. Both unmanaged collision shapes returned `409`, preserved the existing UID, and created no companion resource. Nineteen invalid requests returned `400` without changing workload inventory. Cleanup checked fixture UIDs before deletion, restored the original workload inventory, and retained the namespace.
+
+The ten acceptance samples ranged from 16.19 to 56.29 ms, with a median of 25.82 ms. Service access took 4.60 to 83.38 seconds, including image pulls and rollout. Every sample met the absolute budgets of 11 seconds for acceptance and 180 seconds for access. These are local acceptance measurements on a busy shared Mac, not a speedup claim. On trunk commit `0d3f38c`, ten POST requests returned `404` and ten health requests returned `200`. Trunk has no equivalent create operation to compare.
+
+The fixtures used these distinct image indexes after registry inspection confirmed `linux/arm64` support.
+
+- `docker.io/library/nginx@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5`, resolved from `stable-alpine`.
+- `docker.io/library/nginx@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d`, resolved from `mainline-alpine`.
+
+The local rerun scripts and raw results are in the primary checkout's `.scratch/pr02/` directory. `verify_live.py` saves HTTP transcripts, actual resources, port-forward logs, timings, and cleanup results in `live-results.json`. `verify_offline.py` records commands, exit codes, and test output in `offline-results.json`. These local artifacts are excluded from Git.
+
+After the response-classification fix, `verify_pair.py` exercised the final binary with two different-image applications. Both Services returned HTTP `200` through simultaneous port-forwards on local ports 8081 and 8082. Both forwards remained alive during the checks. The script then removed its UID-checked fixtures and confirmed the original workload inventory. `pair-results.json` and `pair-transcript.log` retain the responses and cleanup result.
+
+Independent native review identified response-classification gaps after accepted writes with malformed headers or truncated bodies. Focused typed-upstream tests reproduced both failures before the fix. The final `go test -count=1 -v ./...`, `go test -race -count=1 ./...`, `go vet ./...`, and `go build ./...` runs all passed after the fix. `gofmt -l` produced no filenames, and `git diff --check` passed. Controlled upstream tests cover the shared deadline, cancellation, retained Deployment, known rejection, uncertain write, and credential-safe transport errors. These tests establish HTTP and application behavior; the live exercises establish controller behavior and networking.
+
+The prescribed cross-provider review and independent verification swarm remain incomplete. Claude failed authentication, and the Grok CLI is unavailable. Terminal screenshots and video could not be recorded because the Computer Use tool refused Terminal access. These gaps remain open for operator review before merge; this record does not claim the plan's formal clean verdict.
+
+The creation handler requires the Kubernetes client that passed startup checks. PR-02 therefore also updates `main.go`, `main_test.go`, `internal/httpapi/server.go`, and `internal/httpapi/server_test.go` beyond the plan's proposed paths. `internal/httpapi/upstream_test.go` keeps controlled transport tests separate from request-validation tests. These wiring and test-path adjustments do not add another application endpoint.
 
 ## Check startup failures
 

@@ -32,7 +32,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, path string, startServer func(context.Context) error) error {
+func run(ctx context.Context, path string, startServer func(context.Context, http.Handler) error) error {
 	client, err := kube.Load(path)
 	if err != nil {
 		return err
@@ -44,13 +44,13 @@ func run(ctx context.Context, path string, startServer func(context.Context) err
 		return fmt.Errorf("startup check for context %q and namespace %q: %w", kube.ContextName, kube.Namespace, err)
 	}
 	log.Printf("Kubernetes startup check passed context=%s namespace=%s version=%s", kube.ContextName, kube.Namespace, info.GitVersion)
-	return startServer(ctx)
+	return startServer(ctx, httpapi.NewHandler(kube.Apps{Client: client}))
 }
 
-func serve(ctx context.Context) error {
+func serve(ctx context.Context, handler http.Handler) error {
 	server := &http.Server{
 		Addr:              listenAddress,
-		Handler:           httpapi.NewHandler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	result := make(chan error, 1)
