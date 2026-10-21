@@ -213,29 +213,31 @@ Source and local unit, race, live creation, Service access, and acceptance-budge
 
 **Depends on.** PR-02.
 
+Implementation and offline checks are complete. Parent-run cluster and controlled-upstream evidence is recorded in [the runbook](runbook.md#pr-03-verification-status). The formal ten-worker and media gates below remain open.
+
 **Files.**
 
-- [ ] Create or edit `internal/kube/apps.go`.
-- [ ] Create or edit `internal/kube/apps_test.go`.
-- [ ] Create or edit `internal/httpapi/apps.go`.
-- [ ] Create or edit `internal/httpapi/apps_test.go`.
-- [ ] Create or edit `docs/runbook.md`.
+- [x] Create or edit `internal/kube/apps.go`.
+- [x] Create or edit `internal/kube/apps_test.go`.
+- [x] Create or edit `internal/httpapi/apps.go`.
+- [x] Create or edit `internal/httpapi/apps_test.go`.
+- [x] Create or edit `docs/runbook.md`.
 
 **Build.**
 
-- [ ] Add GET /apps as the sorted union of managed Deployment and Service names with presence flags.
-- [ ] Use both managed labels where appropriate. Exclude unmanaged objects and avoid an in-memory app registry.
-- [ ] Treat required list failures as upstream errors. Never return an empty successful result for an unavailable cluster.
+- [x] Add GET /apps as the sorted union of managed Deployment and Service names with presence flags.
+- [x] Use both managed labels where appropriate. Exclude unmanaged objects and avoid an in-memory app registry.
+- [x] Treat required list failures as upstream errors. Never return an empty successful result for an unavailable cluster.
 
 **You see.**
 
-- [ ] Complete, Deployment-only, and Service-only apps remain discoverable after API restart. Save HTTP transcripts and matching Kubernetes evidence.
+- [x] Complete, Deployment-only, and Service-only apps remain discoverable after API restart. Save HTTP transcripts and matching Kubernetes evidence.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Test sorted unions, empty lists, duplicates across kinds, both partial shapes, unmanaged objects, and required read failure.
-- [ ] Reuse retained partial-create state from PR-02 in a create-then-list test. Assert no registry is needed after server reconstruction.
-- [ ] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
+- [x] Test sorted unions, empty lists, duplicates across kinds, both partial shapes, unmanaged objects, and required read failure.
+- [x] Reuse retained partial-create state from PR-02 in a create-then-list test. Assert no registry is needed after server reconstruction.
+- [x] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` role at the PR head, per the boot recipe.
 

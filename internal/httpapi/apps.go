@@ -13,6 +13,26 @@ type AppCreator interface {
 	Create(context.Context, kube.AppSpec) (kube.CreateResult, error)
 }
 
+type AppLister interface {
+	List(context.Context) (kube.ListResult, error)
+}
+
+type AppService interface {
+	AppCreator
+	AppLister
+}
+
+func listApps(lister AppLister) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result, err := lister.List(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
 var appName = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 func createApp(creator AppCreator) http.HandlerFunc {
@@ -37,5 +57,5 @@ func createApp(creator AppCreator) http.HandlerFunc {
 }
 
 func invalidRequest(message string) *kube.AppError {
-	return &kube.AppError{Code: "invalid_request", Message: message, Details: kube.ErrorDetails{Namespace: kube.Namespace, Resources: kube.CreateOutcomes{Deployment: kube.NotAttempted, Service: kube.NotAttempted}, Reason: "InvalidRequest"}}
+	return &kube.AppError{Code: "invalid_request", Message: message, Details: kube.ErrorDetails{Namespace: kube.Namespace, Resources: &kube.CreateOutcomes{Deployment: kube.NotAttempted, Service: kube.NotAttempted}, Reason: "InvalidRequest"}}
 }

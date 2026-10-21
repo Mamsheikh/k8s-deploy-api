@@ -31,7 +31,7 @@ func TestRouting(t *testing.T) {
 		path   string
 		status int
 	}{
-		{http.MethodGet, "/apps", http.StatusMethodNotAllowed},
+		{http.MethodPut, "/apps", http.StatusMethodNotAllowed},
 		{http.MethodGet, "/healthz/extra", http.StatusNotFound},
 		{http.MethodGet, "/", http.StatusNotFound},
 		{http.MethodPost, "/healthz", http.StatusMethodNotAllowed},
@@ -48,7 +48,7 @@ func TestRouting(t *testing.T) {
 			if tc.status == http.StatusMethodNotAllowed {
 				allow := "GET, HEAD"
 				if tc.path == "/apps" {
-					allow = "POST"
+					allow = "GET, HEAD, POST"
 				}
 				if w.Header().Get("Allow") != allow {
 					t.Errorf("Allow = %q, want %q", w.Header().Get("Allow"), allow)

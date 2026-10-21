@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sort"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,6 +19,21 @@ type AppSpec struct {
 	Name          string `json:"name"`
 	Image         string `json:"image"`
 	ContainerPort int32  `json:"containerPort"`
+}
+
+type AppPresence struct {
+	Deployment bool `json:"deployment"`
+	Service    bool `json:"service"`
+}
+
+type AppSummary struct {
+	Name      string      `json:"name"`
+	Namespace string      `json:"namespace"`
+	Resources AppPresence `json:"resources"`
+}
+
+type ListResult struct {
+	Apps []AppSummary `json:"apps"`
 }
 
 type CreateOutcome string
@@ -43,10 +59,10 @@ type CreateResult struct {
 }
 
 type ErrorDetails struct {
-	Name      string         `json:"name"`
-	Namespace string         `json:"namespace"`
-	Resources CreateOutcomes `json:"resources"`
-	Reason    string         `json:"reason"`
+	Name      string          `json:"name"`
+	Namespace string          `json:"namespace"`
+	Resources *CreateOutcomes `json:"resources,omitempty"`
+	Reason    string          `json:"reason"`
 }
 
 type AppError struct {
@@ -96,6 +112,61 @@ func (a Apps) Create(ctx context.Context, spec AppSpec) (CreateResult, error) {
 	return CreateResult{Name: spec.Name, Namespace: Namespace, Deployment: spec.Name, Service: spec.Name, StatusURL: "/apps/" + spec.Name}, nil
 }
 
+func (a Apps) List(ctx context.Context) (ListResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
+	defer cancel()
+	fail := func(err error) (ListResult, error) {
+		failure := operationError(err)
+		if failure.Code == "not_found" {
+			failure.Code = "upstream_unavailable"
+		}
+		return ListResult{}, failure
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	options := metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=deploy-api,app.kubernetes.io/name"}
+	deployments, err := a.Client.AppsV1().Deployments(Namespace).List(ctx, options)
+	if err != nil {
+		return fail(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	services, err := a.Client.CoreV1().Services(Namespace).List(ctx, options)
+	if err != nil {
+		return fail(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	presence := make(map[string]AppPresence)
+	for _, item := range deployments.Items {
+		if managedApp(item.ObjectMeta) {
+			resources := presence[item.Name]
+			resources.Deployment = true
+			presence[item.Name] = resources
+		}
+	}
+	for _, item := range services.Items {
+		if managedApp(item.ObjectMeta) {
+			resources := presence[item.Name]
+			resources.Service = true
+			presence[item.Name] = resources
+		}
+	}
+	result := ListResult{Apps: make([]AppSummary, 0, len(presence))}
+	for name, resources := range presence {
+		result.Apps = append(result.Apps, AppSummary{Name: name, Namespace: Namespace, Resources: resources})
+	}
+	sort.Slice(result.Apps, func(i, j int) bool { return result.Apps[i].Name < result.Apps[j].Name })
+	return result, nil
+}
+
+func managedApp(meta metav1.ObjectMeta) bool {
+	return meta.Namespace == Namespace && meta.Labels["app.kubernetes.io/managed-by"] == "deploy-api" && meta.Labels["app.kubernetes.io/name"] == meta.Name
+}
+
 func writeOutcome(err error) CreateOutcome {
 	var status apierrors.APIStatus
 	if errors.As(err, &status) && !apierrors.IsTimeout(err) && !apierrors.IsServerTimeout(err) && !apierrors.IsInternalError(err) {
@@ -105,13 +176,27 @@ func writeOutcome(err error) CreateOutcome {
 }
 
 func createError(name string, outcomes CreateOutcomes, err error) *AppError {
+	failure := operationError(err)
+	failure.Details.Name = name
+	failure.Details.Resources = &outcomes
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) || status.Status().Message == "" {
+		switch failure.Code {
+		case "upstream_timeout", "conflict":
+			failure.Message += "; inspect before retrying"
+		}
+	}
+	return failure
+}
+
+func operationError(err error) *AppError {
 	code, message, reason := "internal_error", "Unexpected error communicating with Kubernetes", "InternalError"
 	var network net.Error
 	switch {
 	case errors.Is(err, context.DeadlineExceeded), apierrors.IsTimeout(err), apierrors.IsServerTimeout(err):
-		code, message, reason = "upstream_timeout", "Kubernetes operation timed out; inspect before retrying", "Timeout"
+		code, message, reason = "upstream_timeout", "Kubernetes operation timed out", "Timeout"
 	case apierrors.IsAlreadyExists(err), apierrors.IsConflict(err):
-		code, message, reason = "conflict", "Application resource already exists or conflicts; inspect before retrying", "Conflict"
+		code, message, reason = "conflict", "Application resource already exists or conflicts", "Conflict"
 	case apierrors.IsNotFound(err):
 		code, message, reason = "not_found", "Kubernetes resource was not found", "NotFound"
 	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err), apierrors.IsServiceUnavailable(err), apierrors.IsTooManyRequests(err), errors.As(err, &network), errors.Is(err, context.Canceled), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
@@ -127,5 +212,5 @@ func createError(name string, outcomes CreateOutcomes, err error) *AppError {
 			message = detail.Message
 		}
 	}
-	return &AppError{Code: code, Message: message, Details: ErrorDetails{Name: name, Namespace: Namespace, Resources: outcomes, Reason: reason}}
+	return &AppError{Code: code, Message: message, Details: ErrorDetails{Namespace: Namespace, Reason: reason}}
 }
