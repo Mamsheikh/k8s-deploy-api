@@ -10,6 +10,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -36,18 +37,21 @@ type ListResult struct {
 	Apps []AppSummary `json:"apps"`
 }
 
-type CreateOutcome string
+type ResourceOutcome string
 
 const (
-	Created      CreateOutcome = "created"
-	Failed       CreateOutcome = "failed"
-	Unknown      CreateOutcome = "unknown"
-	NotAttempted CreateOutcome = "not_attempted"
+	Created         ResourceOutcome = "created"
+	Absent          ResourceOutcome = "absent"
+	Deleting        ResourceOutcome = "deleting"
+	DeleteRequested ResourceOutcome = "delete_requested"
+	Failed          ResourceOutcome = "failed"
+	Unknown         ResourceOutcome = "unknown"
+	NotAttempted    ResourceOutcome = "not_attempted"
 )
 
-type CreateOutcomes struct {
-	Deployment CreateOutcome `json:"deployment"`
-	Service    CreateOutcome `json:"service"`
+type ResourceOutcomes struct {
+	Deployment ResourceOutcome `json:"deployment"`
+	Service    ResourceOutcome `json:"service"`
 }
 
 type CreateResult struct {
@@ -58,11 +62,30 @@ type CreateResult struct {
 	StatusURL  string `json:"statusUrl"`
 }
 
+type DeleteResult struct {
+	Name      string           `json:"name"`
+	Namespace string           `json:"namespace"`
+	Resources ResourceOutcomes `json:"resources"`
+	StatusURL string           `json:"statusUrl"`
+}
+
+type ResourceFailure struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Reason  string `json:"reason"`
+}
+
+type ResourceFailures struct {
+	Deployment *ResourceFailure `json:"deployment,omitempty"`
+	Service    *ResourceFailure `json:"service,omitempty"`
+}
+
 type ErrorDetails struct {
-	Name      string          `json:"name"`
-	Namespace string          `json:"namespace"`
-	Resources *CreateOutcomes `json:"resources,omitempty"`
-	Reason    string          `json:"reason"`
+	Failures  *ResourceFailures `json:"failures,omitempty"`
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace"`
+	Resources *ResourceOutcomes `json:"resources,omitempty"`
+	Reason    string            `json:"reason"`
 }
 
 type AppError struct {
@@ -78,7 +101,7 @@ type Apps struct{ Client kubernetes.Interface }
 func (a Apps) Create(ctx context.Context, spec AppSpec) (CreateResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
 	defer cancel()
-	outcomes := CreateOutcomes{Deployment: NotAttempted, Service: NotAttempted}
+	outcomes := ResourceOutcomes{Deployment: NotAttempted, Service: NotAttempted}
 	fail := func(err error) (CreateResult, error) {
 		return CreateResult{}, createError(spec.Name, outcomes, err)
 	}
@@ -110,6 +133,96 @@ func (a Apps) Create(ctx context.Context, spec AppSpec) (CreateResult, error) {
 		return fail(err)
 	}
 	return CreateResult{Name: spec.Name, Namespace: Namespace, Deployment: spec.Name, Service: spec.Name, StatusURL: "/apps/" + spec.Name}, nil
+}
+
+func (a Apps) Delete(ctx context.Context, name string) (DeleteResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
+	defer cancel()
+	deployments := a.Client.AppsV1().Deployments(Namespace)
+	services := a.Client.CoreV1().Services(Namespace)
+	background := metav1.DeletePropagationBackground
+	depOutcome, depErr := deleteResource(ctx, name, deploymentResource,
+		func() (metav1.Object, error) { return deployments.Get(ctx, name, metav1.GetOptions{}) },
+		func(options metav1.DeleteOptions) error { return deployments.Delete(ctx, name, options) },
+		metav1.DeleteOptions{PropagationPolicy: &background})
+	svcOutcome, svcErr := deleteResource(ctx, name, serviceResource,
+		func() (metav1.Object, error) { return services.Get(ctx, name, metav1.GetOptions{}) },
+		func(options metav1.DeleteOptions) error { return services.Delete(ctx, name, options) },
+		metav1.DeleteOptions{})
+	outcomes := ResourceOutcomes{Deployment: depOutcome, Service: svcOutcome}
+	if depErr != nil || svcErr != nil {
+		failures := &ResourceFailures{}
+		var selected *AppError
+		for i, err := range []error{depErr, svcErr} {
+			if err == nil {
+				continue
+			}
+			failure := operationError(err)
+			detail := &ResourceFailure{Code: failure.Code, Message: failure.Message, Reason: failure.Details.Reason}
+			if i == 0 {
+				failures.Deployment = detail
+			} else {
+				failures.Service = detail
+			}
+			if selected == nil || deleteErrorPriority(failure.Code) > deleteErrorPriority(selected.Code) {
+				selected = failure
+			}
+		}
+		selected.Details.Name = name
+		selected.Details.Resources = &outcomes
+		selected.Details.Failures = failures
+		return DeleteResult{}, selected
+	}
+	return DeleteResult{Name: name, Namespace: Namespace, Resources: outcomes, StatusURL: "/apps/" + name}, nil
+}
+
+func deleteResource(ctx context.Context, name string, resource schema.GroupResource, get func() (metav1.Object, error), remove func(metav1.DeleteOptions) error, options metav1.DeleteOptions) (ResourceOutcome, error) {
+	if err := ctx.Err(); err != nil {
+		return NotAttempted, err
+	}
+	object, err := get()
+	if apierrors.IsNotFound(err) {
+		return Absent, nil
+	}
+	if err != nil {
+		return NotAttempted, err
+	}
+	meta := metav1.ObjectMeta{Name: object.GetName(), Namespace: object.GetNamespace(), Labels: object.GetLabels()}
+	if object.GetName() != name || !managedApp(meta) {
+		return NotAttempted, apierrors.NewConflict(resource, name, errors.New("resource is not managed by deploy-api for this application"))
+	}
+	uid, version := object.GetUID(), object.GetResourceVersion()
+	if uid == "" || version == "" {
+		return NotAttempted, errors.New("Kubernetes resource identity is incomplete")
+	}
+	if object.GetDeletionTimestamp() != nil {
+		return Deleting, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return NotAttempted, err
+	}
+	options.Preconditions = &metav1.Preconditions{UID: &uid, ResourceVersion: &version}
+	err = remove(options)
+	if apierrors.IsNotFound(err) {
+		return Absent, nil
+	}
+	if err != nil {
+		return writeOutcome(err), err
+	}
+	return DeleteRequested, nil
+}
+
+func deleteErrorPriority(code string) int {
+	switch code {
+	case "upstream_timeout":
+		return 4
+	case "upstream_unavailable":
+		return 3
+	case "internal_error":
+		return 2
+	default:
+		return 1
+	}
 }
 
 func (a Apps) List(ctx context.Context) (ListResult, error) {
@@ -167,7 +280,7 @@ func managedApp(meta metav1.ObjectMeta) bool {
 	return meta.Namespace == Namespace && meta.Labels["app.kubernetes.io/managed-by"] == "deploy-api" && meta.Labels["app.kubernetes.io/name"] == meta.Name
 }
 
-func writeOutcome(err error) CreateOutcome {
+func writeOutcome(err error) ResourceOutcome {
 	var status apierrors.APIStatus
 	if errors.As(err, &status) && !apierrors.IsTimeout(err) && !apierrors.IsServerTimeout(err) && !apierrors.IsInternalError(err) {
 		return Failed
@@ -175,7 +288,7 @@ func writeOutcome(err error) CreateOutcome {
 	return Unknown
 }
 
-func createError(name string, outcomes CreateOutcomes, err error) *AppError {
+func createError(name string, outcomes ResourceOutcomes, err error) *AppError {
 	failure := operationError(err)
 	failure.Details.Name = name
 	failure.Details.Resources = &outcomes
