@@ -519,22 +519,25 @@ Implementation and offline checks are complete. Local cluster and latency result
 
 ## Stream one selected owned Pod with cancellation (PR-08)
 
+Local build, offline checks, controlled delivery checks, and the Docker Desktop stream exercise passed on 2026-10-22. See [the verification record](runbook.md#pr-08-local-verification). Independent swarm and media gates remain open.
+
 **Depends on.** PR-05. Deliver after PR-07 in the stack.
 
 **Files.**
 
-- [ ] Create or edit `internal/kube/logs.go`.
-- [ ] Create or edit `internal/kube/logs_test.go`.
-- [ ] Create or edit `internal/httpapi/logs.go`.
-- [ ] Create or edit `internal/httpapi/logs_test.go`.
-- [ ] Create or edit `internal/httpapi/server.go`.
-- [ ] Create or edit `docs/runbook.md`.
+- [x] Create or edit `internal/kube/logs.go`.
+- [x] Create or edit `internal/kube/logs_test.go`.
+- [x] Create or edit `internal/httpapi/logs.go`.
+- [x] Create or edit `internal/httpapi/logs_test.go`.
+- [x] Create or edit `internal/httpapi/server.go`.
+- [x] Create or edit `internal/httpapi/apps.go` to extend the service interface.
+- [x] Create or edit `docs/runbook.md`.
 
 **Build.**
 
-- [ ] Implement GET /apps/{name}/logs with required pod and tailLines default 100 in range 0 through 1000. Resolve ownership before reading only the app container.
-- [ ] Bound ownership lookup and connection/header establishment. Tie the stream body to request cancellation without an ordinary total timeout, rest.Config total timeout, HTTP client total timeout, or server write deadline cutting it off.
-- [ ] Open upstream before writing 200 text/plain. Flush copied output, close upstream on disconnect, and record post-header failures in process logs. EOF or replacement requires explicit reconnect.
+- [x] Implement GET /apps/{name}/logs with required pod and tailLines default 100 in range 0 through 1000. Resolve ownership before reading only the app container.
+- [x] Bound ownership lookup and connection/header establishment. Tie the stream body to request cancellation without an ordinary total timeout, rest.Config total timeout, HTTP client total timeout, or server write deadline cutting it off.
+- [x] Open upstream before writing 200 text/plain. Flush copied output, close upstream on disconnect, and record post-header failures in process logs. EOF or replacement requires explicit reconnect.
 
 **You see.**
 
@@ -542,9 +545,9 @@ Implementation and offline checks are complete. Local cluster and latency result
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Use a controllable HTTP upstream, not typed fake logs, to test pre-header JSON errors, flushing, bounded establishment, survival beyond an injected ordinary timeout, and cancellation with synchronization.
-- [ ] Test pod selection, tail bounds, ownership mismatch, not-started 409, missing Pod 404, upstream denial 503, timeout 504, EOF, and post-header failure.
-- [ ] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
+- [x] Use a controllable HTTP upstream, not typed fake logs, to test pre-header JSON errors, flushing, bounded establishment, survival beyond an injected ordinary timeout, and cancellation with synchronization.
+- [x] Test pod selection, tail bounds, ownership mismatch, not-started 409, missing Pod 404, upstream denial 503, timeout 504, EOF, and post-header failure.
+- [x] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` role at the PR head, per the boot recipe.
 

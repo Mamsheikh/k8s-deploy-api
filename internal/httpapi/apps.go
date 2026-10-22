@@ -26,6 +26,7 @@ type AppInspector interface {
 }
 
 type AppService interface {
+	AppLogger
 	AppInspector
 	AppDeleter
 	AppCreator
