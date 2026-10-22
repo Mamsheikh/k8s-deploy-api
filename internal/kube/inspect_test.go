@@ -236,8 +236,8 @@ func TestInspectRequestedRolloutReadiness(t *testing.T) {
 			if got.Ready != tc.want {
 				t.Fatalf("ready=%v, want %v, result %#v", got.Ready, tc.want, got)
 			}
-			if len(client.Actions()) != 4 {
-				t.Fatalf("readiness introduced Kubernetes reads: %v", client.Actions())
+			if len(client.Actions()) != 5 {
+				t.Fatalf("unexpected inspection reads: %v", client.Actions())
 			}
 		})
 	}

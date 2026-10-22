@@ -24,6 +24,8 @@ func Load(path string) (*kubernetes.Clientset, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load kubeconfig for context %q: %w", ContextName, err)
 	}
+	config.QPS = 20
+	config.Burst = 30
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("create Kubernetes client for context %q: %w", ContextName, err)
