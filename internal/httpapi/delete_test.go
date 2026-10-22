@@ -105,3 +105,7 @@ func TestDeleteHTTPErrorMapping(t *testing.T) {
 func (f deleterFunc) Inspect(context.Context, string) (kube.InspectResult, error) {
 	return kube.InspectResult{}, nil
 }
+
+func (f deleterFunc) UpdateImage(context.Context, string, kube.ImageUpdateRequest) (kube.ImageUpdateResult, error) {
+	return kube.ImageUpdateResult{}, errors.New("unexpected image update")
+}

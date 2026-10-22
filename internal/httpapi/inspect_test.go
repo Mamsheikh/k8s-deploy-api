@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,6 +29,10 @@ func (f inspectorFunc) Delete(context.Context, string) (kube.DeleteResult, error
 	return kube.DeleteResult{}, nil
 }
 func (f inspectorFunc) List(context.Context) (kube.ListResult, error) { return kube.ListResult{}, nil }
+
+func (f inspectorFunc) UpdateImage(context.Context, string, kube.ImageUpdateRequest) (kube.ImageUpdateResult, error) {
+	return kube.ImageUpdateResult{}, errors.New("unexpected image update")
+}
 
 func TestInspectHTTPValidation(t *testing.T) {
 	handler := NewHandler(inspectorFunc(func(context.Context, string) (kube.InspectResult, error) {

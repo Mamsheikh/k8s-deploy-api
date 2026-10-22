@@ -583,21 +583,25 @@ Local build, offline checks, controlled delivery checks, and the Docker Desktop 
 
 ## Update images and verify the complete lifecycle (PR-09)
 
+Source and local offline and Kubernetes lifecycle checks are recorded in [the PR-09 runbook](runbook.md#pr-09-acceptance-evidence-map). The formal independent swarm, media review, and merge gates remain open.
+
 **Depends on.** PR-04 and PR-06. Deliver after PR-08 in the stack.
 
 **Files.**
 
-- [ ] Create or edit `internal/kube/apps.go`.
-- [ ] Create or edit `internal/kube/apps_test.go`.
-- [ ] Create or edit `internal/httpapi/apps.go`.
-- [ ] Create or edit `internal/httpapi/apps_test.go`.
-- [ ] Create or edit `docs/runbook.md`.
+- [x] Create or edit `internal/kube/apps.go`.
+- [x] Create or edit `internal/kube/apps_test.go`.
+- [x] Create or edit `internal/httpapi/apps.go`.
+- [x] Create or edit `internal/httpapi/apps_test.go`.
+- [x] Create or edit `docs/runbook.md`.
+
+Implementation uses `internal/kube/image_update_test.go` for the kube tests instead of extending `apps_test.go`. The file scope also includes `internal/httpapi/server.go` for routing, separate HTTP update tests and controlled-upstream tests, and existing HTTP test doubles for the updater interface.
 
 **Build.**
 
-- [ ] Implement PATCH /apps/{name}/image with strict image-only JSON. Update only the intended Deployment app container image under the ordinary operation deadline.
-- [ ] Return 409 for partial or deleting apps and write conflicts. Return 202 with name and status URL without rollout waiting. Identical image reference is a no-op with no generation increment.
-- [ ] Preserve Service identity, selectors, port, replica count, probe, resource budgets, and pull policy. Use different verified digests for a real rollout.
+- [x] Implement PATCH /apps/{name}/image with strict image-only JSON. Update only the intended Deployment app container image under the ordinary operation deadline.
+- [x] Return 409 for partial or deleting apps and write conflicts. Return 202 with name and status URL without rollout waiting. Identical image reference is a no-op with no generation increment.
+- [x] Preserve Service identity, selectors, port, replica count, probe, resource budgets, and pull policy. Use different verified digests for a real rollout.
 - [ ] Run the complete spec acceptance sequence and record each criterion with evidence. Add no rollback, scaling, storage, private registry, or platform framework.
 
 **You see.**
@@ -606,9 +610,9 @@ Local build, offline checks, controlled delivery checks, and the Docker Desktop 
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Test strict image-only decode, empty image, missing/partial/deleting apps, identical no-op, write conflicts, image-only mutation, and old-healthy/new-unready inspection.
-- [ ] Run accumulated offline tests and race detection. Map all 10 specification acceptance criteria to named evidence, marking any blocked exercise unverified.
-- [ ] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
+- [x] Test strict image-only decode, empty image, missing/partial/deleting apps, identical no-op, write conflicts, image-only mutation, and old-healthy/new-unready inspection.
+- [x] Run accumulated offline tests and race detection. Map all 10 specification acceptance criteria to named evidence, marking any blocked exercise unverified.
+- [x] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` role at the PR head, per the boot recipe.
 
