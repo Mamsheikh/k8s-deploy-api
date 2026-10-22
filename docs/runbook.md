@@ -412,3 +412,34 @@ A controlled upstream that stalled only events returned HTTP `200` with all 20 c
 Rerunnable scripts, source hashes, image inspections, command logs, raw HTTP and kubectl objects, per-request timings, and provider dropout receipts are retained in the primary checkout's ignored `.scratch/pr07/` directory. `verify_live.py`, `verify_controlled.py`, and `verify_timeout.py` produce their corresponding result JSON files. Initial untuned results remain under `untuned-*`. Build overlays change only the verification listener address to ports 18080, 18081, or 18082. Production `main.go` retains port 8080. The unrelated process on that port was preserved. No worktree was created.
 
 Claude was unauthenticated and the Grok CLI was unavailable. The parent implemented the change with independent native design and source review. Cross-provider review, the prescribed independent verification swarm, terminal screenshots, video, CI, and operator merge review remain open. Local checks do not claim the plan's formal clean verdict or authorize merging. The implementation adds `internal/kube/client.go` to PR-07's proposed file scope for the measured rate-limit adjustment. HTTP transport tests and the implementation checklist also change to cover the fifth read, shared-deadline degradation, and the recorded implementation status.
+
+## Follow one Pod's logs
+
+Select a Pod from `GET /apps/{name}` and pass its name to the logs endpoint.
+
+```sh
+APP=your-app
+POD=your-pod
+curl -N --max-time 20 "http://127.0.0.1:8080/apps/$APP/logs?pod=$POD&tailLines=100"
+kubectl --context=docker-desktop -n deploy-api logs "$POD" -c app --tail=100
+```
+
+The endpoint follows only the selected Pod's `app` container. It verifies the managed Deployment and the ReplicaSet and Pod controller UIDs before requesting logs. An unrelated Pod returns `409`. A missing Deployment or Pod returns `404`. A container that has not started can return `409` with the Kubernetes message.
+
+`pod` is required. `tailLines` defaults to 100 and accepts integers from 0 through 1000. Invalid names, malformed queries, duplicate selection parameters, and invalid tail counts return `400` JSON. Initial Kubernetes permission failures return `503`, and setup timeouts return `504`, before success headers.
+
+Ownership reads and upstream establishment share a ten-second budget. Once established, the body has no total operation deadline. The API flushes headers and each chunk, including partial lines. Disconnect cancels the upstream request and closes its body. EOF ends the response. A failure after success headers closes the response and appears in the API process log. Reconnect explicitly after a container restart or Pod replacement. The API does not switch Pods or request previous-instance logs.
+
+## PR-08 local verification
+
+Offline checks passed on 2026-10-22. `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./...` passed. Controlled HTTP upstream tests cover UID ownership rejection before log access, default and boundary tail values, pre-header JSON errors, header and chunk flushing, EOF, truncated-body process logs, a stalled response header, a stalled error body, setup budget consumed by ownership reads, established streams surviving an injected setup timeout, and upstream cancellation on disconnect and body close. The default suite reads no real kubeconfig.
+
+Five controlled delivery runs each checked 20 timestamped lines and one disconnect. Every delivery and cancellation met the one-second acceptance budget. These measurements check local delivery behavior, not a speedup over trunk, which has no logs endpoint.
+
+The Docker Desktop Kubernetes `v1.34.1` exercise created two isolated nginx apps. A 20-second curl stream delivered a request log near the start and another after 15 seconds, matching `kubectl logs` for the selected Pod. `tailLines` 0 excluded earlier markers; 100 and 1000 included them. Missing selection returned `400`, an absent Pod returned `404`, and the second app's real Pod returned `409`. Trunk returned `404` for the logs route. Both revisions returned successful health responses. Fixture cleanup checked Deployment and Service UIDs, removed the owned children, preserved existing Deployments and Services, and retained the namespace.
+
+The inspected nginx stable-alpine index was `docker.io/library/nginx@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951` with a verified linux/arm64 manifest. Image pulls and rollout preparation were outside stream measurements. Existing processes occupied port 8080, so build overlays changed only the verification listener to port 18080. Production configuration retains port 8080. Initial driver output used a nonexistent nginx path and received `404`; the corrected request used a query marker on `/`, and the complete exercise passed.
+
+Rerunnable live driver, raw command and HTTP evidence, image inspection, baseline source, timing samples, and review reports are retained in the primary checkout's ignored `.scratch/pr08/` directory. `verify_live.py` drives the built baseline and head binaries. `go test ./internal/httpapi -run TestLogsHTTPDeliveryAndCancellationBudget -count=5 -v` reruns the controlled delivery check.
+
+Native design and source review found no blocking correctness issues. Model the Domain kept stream cancellation and body ownership together in the returned closer. Prove It Works required both controlled transport checks and actual Kubernetes output beyond 15 seconds. Grok was unavailable and Claude was unauthenticated, with receipts retained locally. Cross-provider review, the prescribed independent verification swarm, terminal screenshots, video, CI, and operator merge review remain open. Local evidence does not claim the plan's formal clean verdict. `internal/httpapi/apps.go` joins the proposed PR-08 file scope to add the log capability to the service interface; the implementation checklist records only completed local build and unit work.
