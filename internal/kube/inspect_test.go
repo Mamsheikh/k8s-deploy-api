@@ -170,3 +170,154 @@ func TestInspectRequiredReadErrors(t *testing.T) {
 		}
 	}
 }
+
+func readyInspectionFixture() (*appsv1.Deployment, *corev1.Service, *appsv1.ReplicaSet, *corev1.Pod) {
+	d, r, p := inspectionFixture()
+	d.Generation = 3
+	d.Status = appsv1.DeploymentStatus{ObservedGeneration: 3, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}
+	r.Spec.Template = *d.Spec.Template.DeepCopy()
+	r.Spec.Template.Labels[appsv1.DefaultDeploymentUniqueLabelKey] = "hash"
+	p.Spec = *d.Spec.Template.Spec.DeepCopy()
+	p.Status = corev1.PodStatus{
+		Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		ContainerStatuses: []corev1.ContainerStatus{{Name: "app", Image: "nginx:v2", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}},
+	}
+	return d, service(AppSpec{Name: "demo", ContainerPort: 8080}), r, p
+}
+
+func TestInspectRequestedRolloutReadiness(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*appsv1.Deployment, *appsv1.ReplicaSet, *corev1.Pod)
+		want   bool
+	}{
+		{"current template with controller hash", func(*appsv1.Deployment, *appsv1.ReplicaSet, *corev1.Pod) {}, true},
+		{"old image despite complete counters", func(d *appsv1.Deployment, _ *appsv1.ReplicaSet, _ *corev1.Pod) {
+			d.Spec.Template.Spec.Containers[0].Image = "missing:v3"
+		}, false},
+		{"same image with new template annotation", func(d *appsv1.Deployment, _ *appsv1.ReplicaSet, _ *corev1.Pod) {
+			d.Spec.Template.Annotations = map[string]string{"restart": "new"}
+		}, false},
+		{"same image with new template label", func(d *appsv1.Deployment, _ *appsv1.ReplicaSet, _ *corev1.Pod) {
+			d.Spec.Template.Labels["version"] = "new"
+		}, false},
+		{"same image with changed port", func(d *appsv1.Deployment, _ *appsv1.ReplicaSet, _ *corev1.Pod) {
+			d.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort++
+		}, false},
+		{"deleting current replicaset", func(_ *appsv1.Deployment, r *appsv1.ReplicaSet, _ *corev1.Pod) {
+			now := metav1.Now()
+			r.DeletionTimestamp = &now
+		}, false},
+		{"replacement deployment UID", func(d *appsv1.Deployment, _ *appsv1.ReplicaSet, _ *corev1.Pod) { d.UID = "replacement" }, false},
+		{"replacement replicaset UID", func(_ *appsv1.Deployment, r *appsv1.ReplicaSet, _ *corev1.Pod) { r.UID = "replacement" }, false},
+		{"mutated pod spec with requested status image", func(_ *appsv1.Deployment, _ *appsv1.ReplicaSet, p *corev1.Pod) {
+			p.Spec.Containers[0].Image = "other:v1"
+		}, false},
+		{"missing named app in pod spec", func(_ *appsv1.Deployment, _ *appsv1.ReplicaSet, p *corev1.Pod) { p.Spec.Containers[0].Name = "sidecar" }, false},
+		{"runtime resolved status image", func(_ *appsv1.Deployment, _ *appsv1.ReplicaSet, p *corev1.Pod) {
+			p.Status.ContainerStatuses[0].Image = "docker.io/library/nginx:v2"
+		}, true},
+		{"digest runtime normalization", func(d *appsv1.Deployment, r *appsv1.ReplicaSet, p *corev1.Pod) {
+			image := "docker.io/library/nginx@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5"
+			d.Spec.Template.Spec.Containers[0].Image = image
+			r.Spec.Template.Spec.Containers[0].Image = image
+			p.Spec.Containers[0].Image = image
+			p.Status.ContainerStatuses[0].Image = "nginx@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5"
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, s, r, p := readyInspectionFixture()
+			tc.change(d, r, p)
+			client := fake.NewClientset(d, s, r, p)
+			got, err := (Apps{Client: client}).Inspect(context.Background(), "demo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Ready != tc.want {
+				t.Fatalf("ready=%v, want %v, result %#v", got.Ready, tc.want, got)
+			}
+			if len(client.Actions()) != 4 {
+				t.Fatalf("readiness introduced Kubernetes reads: %v", client.Actions())
+			}
+		})
+	}
+}
+
+func TestInspectFailedReplacementAndRecovery(t *testing.T) {
+	d, s, oldSet, oldPod := readyInspectionFixture()
+	d.Spec.Template.Spec.Containers[0].Image = "missing:v3"
+	d.Status.Replicas = 2
+	d.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded", Message: "new replica cannot pull"}}
+	newSet, newPod := oldSet.DeepCopy(), oldPod.DeepCopy()
+	newSet.Name, newSet.UID = "demo-new", "new-set"
+	newSet.Spec.Template = *d.Spec.Template.DeepCopy()
+	newPod.Name, newPod.UID = "demo-new-pod", "new-pod"
+	newPod.OwnerReferences = controller("ReplicaSet", newSet.Name, newSet.UID)
+	newPod.Spec = *newSet.Spec.Template.Spec.DeepCopy()
+	newPod.Status.Conditions[0].Status = corev1.ConditionFalse
+	newPod.Status.ContainerStatuses[0] = corev1.ContainerStatus{Name: "app", Image: "missing:v3", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "image does not exist"}}}
+	client := fake.NewClientset(d, s, oldSet, oldPod, newSet, newPod)
+	apps := Apps{Client: client}
+	for _, replicas := range []int32{2, 1} {
+		d.Status.Replicas = replicas
+		if _, err := client.AppsV1().Deployments(Namespace).Update(context.Background(), d, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := apps.Inspect(context.Background(), "demo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Ready || len(got.Pods) != 2 || !got.Pods[1].Ready || got.Pods[0].Container.State.Waiting.Reason != "ImagePullBackOff" || got.Deployment.Conditions[0].Reason != "ProgressDeadlineExceeded" || got.Deployment.Conditions[0].Message != "new replica cannot pull" {
+			t.Fatalf("failed replacement %#v", got)
+		}
+	}
+	if err := client.CoreV1().Pods(Namespace).Delete(context.Background(), oldPod.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	newPod.Status = *oldPod.Status.DeepCopy()
+	newPod.Status.ContainerStatuses[0].Image = "missing:v3"
+	if _, err := client.CoreV1().Pods(Namespace).Update(context.Background(), newPod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := apps.Inspect(context.Background(), "demo")
+	if err != nil || !got.Ready || got.Deployment.Conditions[0].Reason != "ProgressDeadlineExceeded" {
+		t.Fatalf("recovered result %#v error %v", got, err)
+	}
+}
+
+func TestInspectDoesNotReuseRolloutEvidenceAcrossRequests(t *testing.T) {
+	d, s, r, p := readyInspectionFixture()
+	client := fake.NewClientset(d, s, r, p)
+	apps := Apps{Client: client}
+	assertReady := func(want bool) {
+		t.Helper()
+		got, err := apps.Inspect(context.Background(), "demo")
+		if err != nil || got.Ready != want {
+			t.Fatalf("ready=%v, want %v, error %v", got.Ready, want, err)
+		}
+	}
+	assertReady(true)
+	d.Generation++
+	d.Status.ObservedGeneration++
+	d.Spec.Template.Annotations = map[string]string{"restart": "next"}
+	if _, err := client.AppsV1().Deployments(Namespace).Update(context.Background(), d, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertReady(false)
+	r.Spec.Template = *d.Spec.Template.DeepCopy()
+	r.UID = "replacement-set"
+	if _, err := client.AppsV1().ReplicaSets(Namespace).Update(context.Background(), r, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertReady(false)
+	p.OwnerReferences = controller("ReplicaSet", r.Name, r.UID)
+	if _, err := client.CoreV1().Pods(Namespace).Update(context.Background(), p, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertReady(true)
+	d.UID = "replacement-deployment"
+	if _, err := client.AppsV1().Deployments(Namespace).Update(context.Background(), d, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	assertReady(false)
+}
