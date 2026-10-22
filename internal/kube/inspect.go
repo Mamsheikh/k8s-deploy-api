@@ -8,18 +8,22 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 type InspectResult struct {
-	Name          string                 `json:"name"`
-	Namespace     string                 `json:"namespace"`
-	Image         *string                `json:"image,omitempty"`
-	ContainerPort *int32                 `json:"containerPort,omitempty"`
-	Resources     AppPresence            `json:"resources"`
-	Ready         bool                   `json:"ready"`
-	Deployment    *DeploymentDiagnostics `json:"deployment,omitempty"`
-	Service       *ServiceDiagnostics    `json:"service,omitempty"`
-	Pods          []PodDiagnostics       `json:"pods"`
+	Name                  string                 `json:"name"`
+	Namespace             string                 `json:"namespace"`
+	Image                 *string                `json:"image,omitempty"`
+	ContainerPort         *int32                 `json:"containerPort,omitempty"`
+	Resources             AppPresence            `json:"resources"`
+	Ready                 bool                   `json:"ready"`
+	Deployment            *DeploymentDiagnostics `json:"deployment,omitempty"`
+	Service               *ServiceDiagnostics    `json:"service,omitempty"`
+	Pods                  []PodDiagnostics       `json:"pods"`
+	WarningEvents         []WarningEvent         `json:"warningEvents"`
+	DiagnosticsIncomplete bool                   `json:"diagnosticsIncomplete"`
+	DiagnosticError       *AppError              `json:"diagnosticError,omitempty"`
 }
 
 type DeploymentDiagnostics struct {
@@ -95,7 +99,7 @@ func (a Apps) Inspect(ctx context.Context, name string) (InspectResult, error) {
 	if deployment == nil && service == nil {
 		return fail(apierrors.NewNotFound(deploymentResource, name))
 	}
-	result := InspectResult{Name: name, Namespace: Namespace, Resources: AppPresence{Deployment: deployment != nil, Service: service != nil}, Pods: []PodDiagnostics{}}
+	result := InspectResult{Name: name, Namespace: Namespace, Resources: AppPresence{Deployment: deployment != nil, Service: service != nil}, Pods: []PodDiagnostics{}, WarningEvents: []WarningEvent{}}
 	if service != nil {
 		result.Service = &ServiceDiagnostics{DeletionTimestamp: service.DeletionTimestamp}
 	}
@@ -141,6 +145,20 @@ func (a Apps) Inspect(ctx context.Context, name string) (InspectResult, error) {
 		result.Pods = append(result.Pods, diagnostics)
 	}
 	result.Ready = rolloutReady(result)
+	uids := make(map[types.UID]struct{})
+	uids[deployment.UID] = struct{}{}
+	for uid := range ownership.replicaSets {
+		uids[uid] = struct{}{}
+	}
+	for _, pod := range pods {
+		uids[pod.UID] = struct{}{}
+	}
+	result.WarningEvents, err = a.warningEvents(ctx, uids)
+	if err != nil {
+		result.DiagnosticsIncomplete = true
+		result.DiagnosticError = operationError(err)
+		result.DiagnosticError.Details.Name = name
+	}
 	return result, nil
 }
 

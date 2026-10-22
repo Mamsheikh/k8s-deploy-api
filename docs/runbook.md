@@ -274,7 +274,7 @@ Application `ready` requires both resources present and not deleting. The Deploy
 
 Template comparison ignores Kubernetes' `pod-template-hash` label. Other template changes, including annotations with the same image, require a matching ReplicaSet. Runtime-reported image strings remain diagnostic data because the runtime can normalize them. An old healthy Pod cannot satisfy a failed requested rollout. Raw conditions such as `ProgressDeadlineExceeded` remain visible, and do not prevent later recovery.
 
-Inspection does not wait for rollout. Its four required Kubernetes reads share one 10-second operation deadline. Required read failures return errors instead of an incomplete success response. Warning events arrive in PR-07.
+Inspection does not wait for rollout. Its four required Kubernetes reads and the best-effort warning-event read share one 10-second operation deadline. Required read failures return errors. An events-only failure preserves the core response as described below.
 
 Compare readiness with Kubernetes after creating an app with a verified image and matching port.
 
@@ -339,3 +339,76 @@ The comparative latency check used the PR-05 controlled dataset of 20 ReplicaSet
 Rerunnable scripts, raw HTTP and kubectl transcripts, datasets, per-request timings, source hashes, offline logs, and provider dropout receipts are retained in the primary checkout's ignored `.scratch/pr06/` directory. `verify_live.py`, `verify_scenarios.py`, and `verify_controlled.py` reproduce the local checks. The throughput checkpoint keeps one implementation writer in its own worktree, independent verification artifacts, and serialized real API processes.
 
 Claude could not authenticate and Grok was not installed. Cross-provider design and review, the prescribed independent swarm, screenshots, video, CI, and operator merge review remain open. Native review and local checks do not claim the plan's formal clean verdict or authorize merging. `internal/kube/ownership.go` extends PR-06's proposed paths to retain ReplicaSet template evidence without another read. `internal/httpapi/inspect_test.go` adds observable HTTP coverage.
+
+
+## Inspect warning events and failure causes
+
+`GET /apps/{name}` includes `warningEvents`, an array of at most ten Warning events for the current Deployment, its owned ReplicaSets, and its owned Pods. Each entry preserves `involvedObject`, plus `reason`, `message`, and `timestamp` when available. Membership uses object UIDs from the same inspection ownership graph. A matching app name or label alone does not qualify an event. Service events are outside this graph. Service-only apps return an empty array without an event lookup.
+
+The API configures one shared Kubernetes client limiter at 20 requests per second with a burst of 30. This bounds traffic across API groups while allowing the five-read inspection path to meet the local latency budget.
+
+Warnings sort newest first. Their occurrence time uses the first available value from series last-observed time, last timestamp, event time, first timestamp, and creation timestamp. Events without a timestamp sort last. Equal or absent timestamps sort by event name and then UID, ascending. An empty array does not imply success because Kubernetes events expire.
+
+If only the event lookup fails, inspection returns `200` with the completed core diagnostics, `diagnosticsIncomplete=true`, and `diagnosticError` in the existing structured error shape. Transport errors omit connection details and credentials. A successful lookup returns `diagnosticsIncomplete=false` and omits `diagnosticError`. Event lookup shares the remaining operation budget. Its timeout does not discard completed readiness or Pod diagnostics. Failures in required resource reads still return HTTP errors.
+
+Use isolated names for these exercises. Start the API, and confirm no existing app uses a fixture name before creating it. The commands below use the default API address. The local PR-07 verification used port 18080 through a build overlay because an unrelated application occupied port 8080.
+
+### Observe an image-pull failure
+
+```sh
+curl --fail-with-body -H 'Content-Type: application/json' \
+  -d '{"name":"pull-demo","image":"docker.io/library/nginx:deploy-api-intentionally-missing-20261021","containerPort":80}' \
+  http://127.0.0.1:8080/apps
+curl --fail-with-body http://127.0.0.1:8080/apps/pull-demo
+kubectl --context=docker-desktop -n deploy-api describe pods -l app.kubernetes.io/name=pull-demo
+```
+
+Poll inspection and compare actual waiting reasons and events with Kubernetes. Expect `ready=false`. `ErrImagePull` or `ImagePullBackOff` describes a pull failure. Registry access errors can also prevent the pull, so retain the actual message.
+
+### Observe a failed TCP readiness probe
+
+Resolve and verify the nginx image as described in the specification. Set `IMAGE_A` to its immutable index digest.
+
+```sh
+curl --fail-with-body -H 'Content-Type: application/json' \
+  -d "{\"name\":\"probe-demo\",\"image\":\"$IMAGE_A\",\"containerPort\":81}" \
+  http://127.0.0.1:8080/apps
+curl --fail-with-body http://127.0.0.1:8080/apps/probe-demo
+kubectl --context=docker-desktop -n deploy-api describe pods -l app.kubernetes.io/name=probe-demo
+```
+
+The nginx process can run while its configured TCP probe fails on port 81. Compare `ready=false`, the running container state, and `Unhealthy` warnings. This is different from a container that cannot pull or exits after startup. The Deployment can later expose `ProgressDeadlineExceeded`. The API preserves that condition without declaring a permanent application failure.
+
+### Observe a process that exits and restarts
+
+Follow all five steps of the [crashing-container exercise](spec.md#reproducible-crashing-container-exercise). Resolve `docker.io/library/postgres:17.6-alpine`, verify arm64 support, and record its index digest before creating `crash-demo` on port 5432. Leave the image's default entrypoint and environment unchanged. After a successful pull, allow up to 180 seconds for repeated exits and backoff.
+
+Compare `ready=false`, an increasing `restartCount`, previous termination exit code `1`, and eventual `CrashLoopBackOff` with `kubectl describe pod`. The phase may still be `Running`, and waiting reasons can change between polls. Use `kubectl logs <pod> -c app --previous` to confirm the missing-password startup error. Previous-instance logs remain a kubectl verification step. No previous-log API option is added.
+
+Compare warning `involvedObject.uid` values with the captured Deployment, ReplicaSet, and Pod UIDs. Delete each fixture through `DELETE /apps/{name}` after the comparison. Confirm its owned children disappear and namespace `deploy-api` remains.
+
+```sh
+go test ./internal/kube -run 'TestWarning|TestInspect' -count=1
+go test ./internal/httpapi -run TestInspect -count=1
+```
+
+These tests run offline with fake clients and controlled HTTP upstreams. They cover Warning and UID filtering, timestamp fallback, deterministic ordering, the ten-event limit, preserved crash state, event-only denial and timeout, transport-error sanitization, and the shared deadline.
+
+
+## PR-07 local verification
+
+Local offline checks passed on 2026-10-22 with Go `1.26.0`. `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./...` passed. `gofmt -l` returned no filenames and `git diff --check` passed. Two independent native source reviews found no correctness blockers. The scoped comment audits found no comments or suppressions to remove.
+
+The Docker Desktop Kubernetes `v1.34.1` exercises distinguished three failures. An intentionally missing nginx tag produced image-pull waiting reasons. A running nginx container on the wrong probe port remained unready and exposed `Unhealthy` warnings and raw `ProgressDeadlineExceeded`. The postgres fixture exited with code `1`, increased its restart count, and entered `CrashLoopBackOff`. Its previous-instance logs named the missing `POSTGRES_PASSWORD`. Warning object UIDs, reasons, and messages matched captured Kubernetes objects and events. PR-06 inspection preserved the same core pull-failure diagnosis and lacked the new event fields. Cleanup checked fixture resource UIDs, removed their owned children, restored the original workload inventory, and retained namespace `deploy-api`.
+
+The inspected arm64 nginx index was `docker.io/library/nginx@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5`. The inspected postgres `17.6-alpine` index was `docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94`. Image preparation and registry pull time were outside the inspection latency comparison. The crash observation bound began after a successful process exit had established that the image could run.
+
+The initial repeated-inspection comparison missed the proposed budget. PR-06 p95 was 404.85 ms and the untuned PR-07 p95 was 610.03 ms against a 504.85 ms limit. Recorded upstream requests showed approximately 200 ms gaps for core-group calls, consistent with the installed client-go default five-request-per-second token interval. PR-07 now explicitly configures a shared clientset limiter at 20 requests per second with a burst of 30. This changes rate limiting for all Kubernetes calls, including startup and writes. It permits more upstream traffic and changes contention across API groups. The chosen values are a bounded local configuration, not an optimal cluster-sizing result.
+
+The final comparison used each revision's shipped client configuration against the same controlled dataset of 20 Pods and 20 warnings. Five alternating batches produced 100 successful inspections per revision and 100 successful health requests per revision. PR-06 inspection p95 was 408.56 ms and PR-07 p95 was 255.26 ms, below the proposed 508.56 ms comparative limit. Per-batch p95 ranged from 401.42 to 419.28 ms on PR-06 and 253.45 to 256.60 ms on PR-07. Each baseline inspection made four upstream reads. Each head inspection made five and returned the newest ten warnings. The machine had eight cores and other active applications. This checks the end-to-end acceptance budget with different limiter configurations. It does not establish an algorithmic speedup.
+
+A controlled upstream that stalled only events returned HTTP `200` with all 20 core Pods, `diagnosticsIncomplete=true`, and an upstream-timeout diagnostic after 10.01 seconds. This was within the overall ten-second deadline plus the one-second tolerance. Short-deadline HTTP tests also checked identical deadlines on every read and upstream cancellation. These are transport and application checks, distinct from real Kubernetes controller evidence.
+
+Rerunnable scripts, source hashes, image inspections, command logs, raw HTTP and kubectl objects, per-request timings, and provider dropout receipts are retained in the primary checkout's ignored `.scratch/pr07/` directory. `verify_live.py`, `verify_controlled.py`, and `verify_timeout.py` produce their corresponding result JSON files. Initial untuned results remain under `untuned-*`. Build overlays change only the verification listener address to ports 18080, 18081, or 18082. Production `main.go` retains port 8080. The unrelated process on that port was preserved. No worktree was created.
+
+Claude was unauthenticated and the Grok CLI was unavailable. The parent implemented the change with independent native design and source review. Cross-provider review, the prescribed independent verification swarm, terminal screenshots, video, CI, and operator merge review remain open. Local checks do not claim the plan's formal clean verdict or authorize merging. The implementation adds `internal/kube/client.go` to PR-07's proposed file scope for the measured rate-limit adjustment. HTTP transport tests and the implementation checklist also change to cover the fifth read, shared-deadline degradation, and the recorded implementation status.

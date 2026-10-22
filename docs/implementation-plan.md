@@ -457,31 +457,33 @@ Source and local offline, live inspection, restart, and controlled latency check
 
 ## Add warning events and distinguish failure causes (PR-07)
 
+Implementation and offline checks are complete. Local cluster and latency results are recorded in [the runbook](runbook.md#pr-07-local-verification). The local comparative latency budget passed after the documented client-rate adjustment. Formal independent verification and media-review gates remain open.
+
 **Depends on.** PR-04 and PR-06.
 
 **Files.**
 
-- [ ] Create or edit `internal/kube/events.go`.
-- [ ] Create or edit `internal/kube/events_test.go`.
-- [ ] Create or edit `internal/kube/inspect.go`.
-- [ ] Create or edit `internal/kube/inspect_test.go`.
-- [ ] Create or edit `docs/runbook.md`.
+- [x] Create or edit `internal/kube/events.go`.
+- [x] Create or edit `internal/kube/events_test.go`.
+- [x] Create or edit `internal/kube/inspect.go`.
+- [x] Create or edit `internal/kube/inspect_test.go`.
+- [x] Create or edit `docs/runbook.md`.
 
 **Build.**
 
-- [ ] Attach up to 10 most recent Warning events associated by Deployment, ReplicaSet, or Pod UID. Define deterministic ordering for absent timestamps.
-- [ ] On events-only read failure, preserve core inspection and return diagnosticsIncomplete=true with a readable diagnostic error. Core read failures remain HTTP errors.
-- [ ] Document distinct pull, TCP readiness, and crashing-container exercises. Follow the spec crash fixture without adding environment variables, commands, or previous-log API options.
+- [x] Attach up to 10 most recent Warning events associated by Deployment, ReplicaSet, or Pod UID. Define deterministic ordering for absent timestamps.
+- [x] On events-only read failure, preserve core inspection and return diagnosticsIncomplete=true with a readable diagnostic error. Core read failures remain HTTP errors.
+- [x] Document distinct pull, TCP readiness, and crashing-container exercises. Follow the spec crash fixture without adding environment variables, commands, or previous-log API options.
 
 **You see.**
 
-- [ ] Inspection shows relevant warnings and remains useful if events are unavailable. Crash diagnostics differ from pull and readiness failures. Save HTTP transcripts and matching Kubernetes evidence.
+- [x] Inspection shows relevant warnings and remains useful if events are unavailable. Crash diagnostics differ from pull and readiness failures. Save HTTP transcripts and matching Kubernetes evidence.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Test UID filtering, Warning filtering, ordering, 10-event limit, absent timestamps, event-only Forbidden/timeouts, and the shared deadline.
-- [ ] Assert waiting/restart/last-exit projections for the crash fixture. Do not infer a permanent application failure from a reason string.
-- [ ] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
+- [x] Test UID filtering, Warning filtering, ordering, 10-event limit, absent timestamps, event-only Forbidden/timeouts, and the shared deadline.
+- [x] Assert waiting/restart/last-exit projections for the crash fixture. Do not infer a permanent application failure from a reason string.
+- [x] Run `go test ./...`, `go vet ./...`, and `go build ./...`. Save commands, exit codes, and output. All default tests run offline.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` role at the PR head, per the boot recipe.
 

@@ -31,6 +31,8 @@ func inspectionUpstreamObject(path string) any {
 		return &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: meta}
 	case inspectionPaths[2]:
 		return &appsv1.ReplicaSetList{TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "ReplicaSetList"}, Items: []appsv1.ReplicaSet{}}
+	case "/api/v1/namespaces/deploy-api/events":
+		return &corev1.EventList{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "EventList"}, Items: []corev1.Event{}}
 	default:
 		return &corev1.PodList{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "PodList"}, Items: []corev1.Pod{}}
 	}
@@ -100,7 +102,7 @@ func TestInspectTypedUpstreamReadsAndErrors(t *testing.T) {
 				if want != 200 && (!strings.Contains(w.Body.String(), "controlled read failure") || strings.Contains(w.Body.String(), `"pods"`)) {
 					t.Fatalf("misleading response %s", w.Body)
 				}
-				if stop == "" && len(calls) != 4 {
+				if stop == "" && len(calls) != 5 {
 					t.Fatalf("calls %v", calls)
 				}
 			})
