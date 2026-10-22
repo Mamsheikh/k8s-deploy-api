@@ -44,6 +44,8 @@ type PodDiagnostics struct {
 	Phase             corev1.PodPhase       `json:"phase"`
 	Ready             bool                  `json:"ready"`
 	Container         *ContainerDiagnostics `json:"container,omitempty"`
+	currentTemplate   bool
+	specImage         string
 }
 
 type ContainerDiagnostics struct {
@@ -119,7 +121,11 @@ func (a Apps) Inspect(ctx context.Context, name string) (InspectResult, error) {
 			break
 		}
 	}
-	pods, err := a.ownedPods(ctx, deployment)
+	ownership, err := a.resolveOwnership(ctx, deployment)
+	var pods []corev1.Pod
+	if err == nil {
+		pods, err = a.listOwnedPods(ctx, ownership)
+	}
 	if err != nil {
 		failure := operationError(err)
 		if failure.Code == "not_found" {
@@ -129,13 +135,23 @@ func (a Apps) Inspect(ctx context.Context, name string) (InspectResult, error) {
 		return InspectResult{}, failure
 	}
 	for _, pod := range pods {
-		result.Pods = append(result.Pods, projectPod(pod))
+		diagnostics := projectPod(pod)
+		owner := metav1.GetControllerOf(&pod)
+		diagnostics.currentTemplate = ownership.replicaSets[owner.UID].currentTemplate
+		result.Pods = append(result.Pods, diagnostics)
 	}
+	result.Ready = rolloutReady(result)
 	return result, nil
 }
 
 func projectPod(pod corev1.Pod) PodDiagnostics {
 	result := PodDiagnostics{Name: pod.Name, DeletionTimestamp: pod.DeletionTimestamp, Phase: pod.Status.Phase}
+	for _, container := range pod.Spec.Containers {
+		if container.Name == "app" {
+			result.specImage = container.Image
+			break
+		}
+	}
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodReady {
 			result.Ready = condition.Status == corev1.ConditionTrue

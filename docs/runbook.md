@@ -270,7 +270,29 @@ Pods are sorted by name and must match both app labels and the controller UID ch
 
 Each Pod includes its phase and Pod readiness. Its optional `container` object projects the named `app` container status. This includes the reported image, image ID, readiness, restart count, current `state`, and `lastTerminationState`. Waiting and terminated states preserve Kubernetes reasons and messages. Previous termination includes the exit code, including zero. A Pod without container status omits `container`; an unreported state is an empty object.
 
-In PR-05, application `ready` is always `false`, even when the Pod and Deployment report healthy replicas. PR-06 adds the complete rollout predicate. Warning events arrive in PR-07. Inspection does not wait for rollout, and all required Kubernetes reads share one 10-second operation deadline. Required read failures return errors instead of an incomplete success response.
+Application `ready` requires both resources present and not deleting. The Deployment controller must have observed the current generation. Desired, total, updated, ready, and available replica counts must each equal one. A non-deleting owned Pod must belong to a non-deleting ReplicaSet with the current Deployment template. That Pod and its running `app` container must be ready, and its spec image must match the requested image.
+
+Template comparison ignores Kubernetes' `pod-template-hash` label. Other template changes, including annotations with the same image, require a matching ReplicaSet. Runtime-reported image strings remain diagnostic data because the runtime can normalize them. An old healthy Pod cannot satisfy a failed requested rollout. Raw conditions such as `ProgressDeadlineExceeded` remain visible, and do not prevent later recovery.
+
+Inspection does not wait for rollout. Its four required Kubernetes reads share one 10-second operation deadline. Required read failures return errors instead of an incomplete success response. Warning events arrive in PR-07.
+
+Compare readiness with Kubernetes after creating an app with a verified image and matching port.
+
+```sh
+kubectl --context=docker-desktop -n deploy-api rollout status deployment/learn-a --timeout=180s
+curl --fail-with-body http://127.0.0.1:8080/apps/learn-a
+kubectl --context=docker-desktop -n deploy-api get deployment,service learn-a -o yaml
+kubectl --context=docker-desktop -n deploy-api get replicasets,pods -l app.kubernetes.io/name=learn-a -o yaml
+```
+
+Expect `ready=true` after the matching complete rollout. During startup, a wrong-port probe failure, missing resources, deletion, or an unobserved generation, expect `ready=false`. For a failed replacement exercise before the image-update endpoint exists, change the Deployment's `app` image with `kubectl set image` to an intentionally missing tag. Inspect both the old healthy Pod and the new pull failure. Readiness must remain false, including after `ProgressDeadlineExceeded`. Restore the original verified image and compare the recovered rollout. Save HTTP responses and matching Kubernetes objects for actual cluster evidence.
+
+```sh
+go test ./internal/kube -run 'TestRolloutReady|TestInspect' -count=1
+go test ./internal/httpapi -run TestInspect -count=1
+```
+
+These offline tests use snapshots, fake clients, and controlled HTTP upstreams. They establish readiness decisions and HTTP behavior. They do not verify image pulls, probes, scheduling, real rollout convergence, or inspection latency against a live cluster. The commands above describe manual checks and do not claim that PR-06 live or performance verification has run.
 
 ## PR-04 local verification
 
@@ -301,3 +323,19 @@ Rerunnable scripts and raw evidence live in the primary checkout's ignored `.scr
 The default Grok writer did not start because its CLI is unavailable. The parent implemented this slice with independent native design and code review. Cross-provider design and adversarial review, the prescribed ten-worker swarm, trunk performance baseline, screenshots, video, CI, and operator merge review remain open. Local checks do not claim the plan's formal clean verdict. This delivery stages, commits, and pushes the feature branch without merging.
 
 The route also changes `internal/httpapi/server.go`, and `internal/httpapi/delete_test.go` gains the inspection method on its existing test service. Dedicated HTTP inspection and typed-upstream test files keep the new checks separate from creation tests. These are file-boundary adjustments to PR-05's proposed paths.
+
+## PR-06 local verification
+
+Local checks passed on 2026-10-22 with Go `1.26.0` and Docker Desktop Kubernetes `v1.34.1`. `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./...` passed. `gofmt -l` returned no filenames, and `git diff --check` passed. Independent native code review found no defects. The comment audit found no added source comments or suppressions.
+
+Offline tests cover complete rollouts, stale generations, replica counts, missing and deleting resources, Pod and container readiness, old templates with the same image, ownership UID replacement between inspections, runtime image normalization, and raw progress-deadline conditions through recovery. HTTP tests check the public readiness response and unchanged Pod JSON fields. Ten additional scenarios drove the compiled API against a controlled Kubernetes HTTP upstream. They confirmed the readiness decisions and four reads per inspection. These controlled scenarios are transport and application evidence, not live Kubernetes evidence.
+
+The compiled PR-05 and PR-06 APIs inspected the same healthy Docker Desktop fixture. PR-05 returned `ready=false`; PR-06 returned `ready=true` with one desired, total, updated, ready, and available replica. Twenty additional PR-06 inspections returned ready. A fresh PR-06 rollout became ready within five seconds after a matching complete Deployment snapshot was observed. A wrong-port fixture remained unready while its container ran and after the controller reported raw `ProgressDeadlineExceeded`. That fixture used a 20-second progress deadline to bound the exercise. No rollback occurred. Deployment-only and Service-only fixtures remained unready. Cleanup checked fixture UIDs, restored the original workload inventory, and retained the namespace.
+
+Before the live run, `docker buildx imagetools inspect` confirmed `linux/arm64` support for `docker.io/library/nginx@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5`. The first attempt detected an existing repository API on port 8080 and is excluded from verification. Its fixtures were removed after UID checks. The existing API was temporarily stopped for serial baseline and head checks, then restored.
+
+The comparative latency check used the PR-05 controlled dataset of 20 ReplicaSets and 20 Pods. Five alternating batches produced 100 successful inspections per revision, with no failures and four upstream reads per inspection. Inspection p95 was 404.04 ms on PR-05 and 404.62 ms on PR-06, below the proposed comparative budget of 484.85 ms. Both sides used the shipped client-go configuration on a shared eight-core Mac. Low sampled process CPU and the paced request pattern are consistent with client-go rate limiting, but no profile established a definitive limiter. This is an acceptance-budget check, not a speedup claim. The PR-05 baseline source commit `30aeab0` has the same tree as PR-06's merge-base `7724968`.
+
+Rerunnable scripts, raw HTTP and kubectl transcripts, datasets, per-request timings, source hashes, offline logs, and provider dropout receipts are retained in the primary checkout's ignored `.scratch/pr06/` directory. `verify_live.py`, `verify_scenarios.py`, and `verify_controlled.py` reproduce the local checks. The throughput checkpoint keeps one implementation writer in its own worktree, independent verification artifacts, and serialized real API processes.
+
+Claude could not authenticate and Grok was not installed. Cross-provider design and review, the prescribed independent swarm, screenshots, video, CI, and operator merge review remain open. Native review and local checks do not claim the plan's formal clean verdict or authorize merging. `internal/kube/ownership.go` extends PR-06's proposed paths to retain ReplicaSet template evidence without another read. `internal/httpapi/inspect_test.go` adds observable HTTP coverage.
