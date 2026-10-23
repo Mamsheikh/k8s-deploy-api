@@ -503,3 +503,31 @@ All successful fixtures used inspected immutable image-index references with lin
 The primary checkout's ignored `.scratch/pr09/` directory retains the rerunnable `verify_live.py`, raw command and HTTP logs, initial and final results, image inspections, source hashes, gate exit-code receipts, and native review reports. Build overlays changed only the verification listener to port 18080. Production still binds port 8080. The first controlled transport run failed because its JSON mock did not request JSON from client-go; the fixture was corrected and aggregate tests passed. That failed output remains recorded separately.
 
 Native source review found and corrected the deletion race, and final review found no remaining source blockers. Deslop and comment audits found no flags. Grok was unavailable and Claude was unauthenticated; their receipts are retained. Cross-provider review, the prescribed independent swarm, terminal screenshots, video, CI, and operator merge review remain open. The shared-cluster inventory check also needs a quiet-cluster rerun before claiming the plan's formal clean verdict. This PR does not authorize merging.
+
+## Use the local dashboard
+
+Start the application as usual, then open `http://127.0.0.1:8080/` in your browser.
+
+```sh
+go run .
+```
+
+The dashboard ships inside the Go binary. It uses relative URLs to call the same API, so it requires no frontend build, separate web server, or CORS configuration. Startup still checks context `docker-desktop` and namespace `deploy-api` before serving.
+
+Create an app with its name, public image reference, and container port. Use an architecture-compatible image and its actual listening port. A successful request means Kubernetes accepted the resources; watch inspection for the requested rollout to become ready.
+
+Select an app to inspect its Deployment, Service presence, requested image, Pod diagnostics, and warning events. Resource state comes from the API. A partial or unready app remains visible for diagnosis. Read warnings together with the Pod and Deployment state because missing events do not establish success.
+
+Use image update to request a new rollout on the same port. Select an owned Pod to follow its `app` container logs. Disconnect before switching Pods, or reconnect after replacement. Delete an app through its confirmation dialog, then watch Kubernetes finish removing its resources. Deletion leaves the namespace intact.
+
+## Dashboard verification
+
+Local checks passed on 2026-10-23. `go test ./...`, `go test -race ./...`, `go vet ./...`, `go build ./...`, JavaScript syntax validation, Go formatting, and `git diff --check` passed. Focused HTTP tests cover embedded GET and HEAD assets, MIME types, unknown-route 404s, and preserved JSON API errors. The UI adds no frontend dependency or build command.
+
+Chrome checks against the real Docker Desktop API created an isolated nginx app, observed Deploying and Ready, inspected its Pod, and followed stdout/stderr logs. Requests generated through a Service port-forward appeared in the browser stream more than 15 seconds after connection and matched kubectl logs. A browser image update converged while preserving the Service UID and configuration. Retrying the identical image kept the Deployment generation unchanged. Search, warning-event presentation, keyboard tabs, and deletion confirmation/cancel were checked. Cleanup used a UID-checked API deletion; Kubernetes removed the fixture's resources while the existing app UIDs and namespace remained.
+
+A separate local proxy supplied controlled read and write failures and an empty inventory without changing the real cluster. Failed observations retained the last good data with explicit stale labels and excluded stale entries from ready counts. Failed updates retained the entered image, then retried successfully after recovery. Invalid input showed validation feedback without a misleading partial-write warning. A 390-pixel browser viewport had no horizontal page overflow; metadata wraps and resource panels stack vertically.
+
+Native source review found low-contrast diagnostic text and log-panel focus loss during a changing inspection. The palette was darkened, and the renderer now captures focus and scroll before moving the persistent log element. A browser reproduction lost focus before the correction and retained it afterward during a controlled failed refresh. Follow-up review found no remaining blockers in those fixes. The dashboard renders API strings as text, keeps one abortable log reader, limits retained output to 200,000 characters, and inspects apps with at most two requests at once in a serialized refresh cycle.
+
+Raw local evidence, screenshots, proxy controls, source review reports, contrast calculations, and gate logs are retained in the primary checkout's ignored `.scratch/ui/` directory. Preview builds use an overlay that changes only the verification listener to port 18080; production retains port 8080. Grok was unavailable and Claude was unauthenticated, so cross-provider design review was not available. The dashboard is a local extension of the implemented API, with no hosted deployment or merge included in this change.

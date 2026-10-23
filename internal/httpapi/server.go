@@ -7,6 +7,9 @@ import (
 
 func NewHandler(apps AppService) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", dashboardAsset(dashboardHTML, "text/html; charset=utf-8"))
+	mux.HandleFunc("GET /assets/app.css", dashboardAsset(dashboardCSS, "text/css; charset=utf-8"))
+	mux.HandleFunc("GET /assets/app.js", dashboardAsset(dashboardJS, "text/javascript; charset=utf-8"))
 	mux.HandleFunc("POST /apps", createApp(apps))
 	mux.HandleFunc("GET /apps", listApps(apps))
 	mux.HandleFunc("GET /apps/{name}", inspectApp(apps))

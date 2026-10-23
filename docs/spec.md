@@ -113,3 +113,7 @@ Implement in small reviewable steps: connection and inspection, creation and acc
 ## Exclusions
 
 Frontend, authentication, databases, queues, repository builds, operated registries, private-registry credentials, automatic architecture checks, BYOC, custom controllers/resources, sandboxes, production deployment, API-managed port forwarding, ingress, load balancers, environment variables, custom commands, volumes, scaling, automatic rollback, and log aggregation/reconnection. Built-in Kubernetes controllers remain responsible for convergence. This planning task ends with this document; application code and repository scaffolding are deferred.
+
+## Local dashboard extension
+
+The local browser dashboard presents the implemented API lifecycle at `GET /`. It serves embedded static assets from the Go process and calls the existing application endpoints on the same origin. Kubernetes remains the source of application state. The dashboard supports creation, inventory and inspection, image updates, explicit selected-Pod log streams, and confirmed deletion. It displays asynchronous convergence and diagnostics without adding workload configuration or changing API mutation semantics.
