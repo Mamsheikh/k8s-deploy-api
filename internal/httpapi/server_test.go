@@ -33,7 +33,8 @@ func TestRouting(t *testing.T) {
 	}{
 		{http.MethodPut, "/apps", http.StatusMethodNotAllowed},
 		{http.MethodGet, "/healthz/extra", http.StatusNotFound},
-		{http.MethodGet, "/", http.StatusNotFound},
+		{http.MethodGet, "/", http.StatusOK},
+		{http.MethodGet, "/unknown", http.StatusNotFound},
 		{http.MethodPost, "/healthz", http.StatusMethodNotAllowed},
 		{http.MethodPut, "/healthz", http.StatusMethodNotAllowed},
 		{http.MethodDelete, "/healthz", http.StatusMethodNotAllowed},
