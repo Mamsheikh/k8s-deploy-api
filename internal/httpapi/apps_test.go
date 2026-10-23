@@ -138,3 +138,7 @@ func (f creatorFunc) Delete(context.Context, string) (kube.DeleteResult, error) 
 func (f creatorFunc) Inspect(context.Context, string) (kube.InspectResult, error) {
 	return kube.InspectResult{}, nil
 }
+
+func (f creatorFunc) UpdateImage(context.Context, string, kube.ImageUpdateRequest) (kube.ImageUpdateResult, error) {
+	return kube.ImageUpdateResult{}, errors.New("unexpected image update")
+}

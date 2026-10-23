@@ -69,6 +69,15 @@ type DeleteResult struct {
 	StatusURL string           `json:"statusUrl"`
 }
 
+type ImageUpdateRequest struct {
+	Image string `json:"image"`
+}
+
+type ImageUpdateResult struct {
+	Name      string `json:"name"`
+	StatusURL string `json:"statusUrl"`
+}
+
 type ResourceFailure struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -97,6 +106,77 @@ type AppError struct {
 func (e *AppError) Error() string { return e.Message }
 
 type Apps struct{ Client kubernetes.Interface }
+
+func (a Apps) UpdateImage(ctx context.Context, name string, request ImageUpdateRequest) (ImageUpdateResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
+	defer cancel()
+	fail := func(err error) (ImageUpdateResult, error) {
+		failure := operationError(err)
+		failure.Details.Name = name
+		return ImageUpdateResult{}, failure
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	deployments := a.Client.AppsV1().Deployments(Namespace)
+	deployment, err := deployments.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		deployment = nil
+	} else if err != nil {
+		return fail(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	service, err := a.Client.CoreV1().Services(Namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		service = nil
+	} else if err != nil {
+		return fail(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	if deployment != nil && (deployment.Name != name || !managedApp(deployment.ObjectMeta)) {
+		return fail(apierrors.NewConflict(deploymentResource, name, errors.New("resource is not managed by deploy-api for this application")))
+	}
+	if service != nil && (service.Name != name || !managedApp(service.ObjectMeta)) {
+		return fail(apierrors.NewConflict(serviceResource, name, errors.New("resource is not managed by deploy-api for this application")))
+	}
+	if deployment == nil && service == nil {
+		return fail(apierrors.NewNotFound(deploymentResource, name))
+	}
+	if deployment == nil || service == nil {
+		return fail(apierrors.NewConflict(deploymentResource, name, errors.New("application is incomplete; delete and recreate it")))
+	}
+	if deployment.DeletionTimestamp != nil || service.DeletionTimestamp != nil {
+		return fail(apierrors.NewConflict(deploymentResource, name, errors.New("application is being deleted")))
+	}
+	for i, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name != "app" {
+			continue
+		}
+		result := ImageUpdateResult{Name: name, StatusURL: "/apps/" + name}
+		if container.Image == request.Image {
+			return result, nil
+		}
+		if deployment.UID == "" || deployment.ResourceVersion == "" {
+			return fail(errors.New("Kubernetes resource identity is incomplete"))
+		}
+		deployment.Spec.Template.Spec.Containers[i].Image = request.Image
+		if err := ctx.Err(); err != nil {
+			return fail(err)
+		}
+		if _, err := deployments.Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+			if apierrors.IsNotFound(err) {
+				err = apierrors.NewConflict(deploymentResource, name, errors.New("application Deployment disappeared during image update; inspect before retrying"))
+			}
+			return fail(err)
+		}
+		return result, nil
+	}
+	return fail(apierrors.NewConflict(deploymentResource, name, errors.New("application Deployment has no app container")))
+}
 
 func (a Apps) Create(ctx context.Context, spec AppSpec) (CreateResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)

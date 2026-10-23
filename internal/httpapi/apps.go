@@ -25,7 +25,12 @@ type AppInspector interface {
 	Inspect(context.Context, string) (kube.InspectResult, error)
 }
 
+type AppImageUpdater interface {
+	UpdateImage(context.Context, string, kube.ImageUpdateRequest) (kube.ImageUpdateResult, error)
+}
+
 type AppService interface {
+	AppImageUpdater
 	AppLogger
 	AppInspector
 	AppDeleter
@@ -45,6 +50,32 @@ func listApps(lister AppLister) http.HandlerFunc {
 }
 
 var appName = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+func updateAppImage(updater AppImageUpdater) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if !appName.MatchString(name) {
+			writeError(w, invalidRequest("Name must be 1 to 63 lowercase letters, digits or hyphens, starting with a letter and ending with a letter or digit"))
+			return
+		}
+		var request kube.ImageUpdateRequest
+		if err := decodeObject(r.Body, &request); err != nil {
+			writeError(w, invalidRequest("Body must be one JSON object with only image"))
+			return
+		}
+		if strings.TrimSpace(request.Image) == "" {
+			writeError(w, invalidRequest("Image must be nonempty"))
+			return
+		}
+		result, err := updater.UpdateImage(r.Context(), name, request)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		w.Header().Set("Location", result.StatusURL)
+		writeJSON(w, http.StatusAccepted, result)
+	}
+}
 
 func createApp(creator AppCreator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

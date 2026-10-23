@@ -443,3 +443,63 @@ The inspected nginx stable-alpine index was `docker.io/library/nginx@sha256:4792
 Rerunnable live driver, raw command and HTTP evidence, image inspection, baseline source, timing samples, and review reports are retained in the primary checkout's ignored `.scratch/pr08/` directory. `verify_live.py` drives the built baseline and head binaries. `go test ./internal/httpapi -run TestLogsHTTPDeliveryAndCancellationBudget -count=5 -v` reruns the controlled delivery check.
 
 Native design and source review found no blocking correctness issues. Model the Domain kept stream cancellation and body ownership together in the returned closer. Prove It Works required both controlled transport checks and actual Kubernetes output beyond 15 seconds. Grok was unavailable and Claude was unauthenticated, with receipts retained locally. Cross-provider review, the prescribed independent verification swarm, terminal screenshots, video, CI, and operator merge review remain open. Local evidence does not claim the plan's formal clean verdict. `internal/httpapi/apps.go` joins the proposed PR-08 file scope to add the log capability to the service interface; the implementation checklist records only completed local build and unit work.
+
+## Update an application's image
+
+Resolve a second public image digest with the same listening port before updating. Confirm `linux/arm64` support with `docker buildx imagetools inspect`. Use a different reference to request a rollout.
+
+```sh
+APP=your-app
+IMAGE_B=your-verified-image-reference
+kubectl --context=docker-desktop -n deploy-api get service "$APP" -o yaml
+curl --fail-with-body -i -X PATCH -H 'Content-Type: application/json' \
+  -d "{\"image\":\"$IMAGE_B\"}" "http://127.0.0.1:8080/apps/$APP/image"
+curl --fail-with-body "http://127.0.0.1:8080/apps/$APP"
+kubectl --context=docker-desktop -n deploy-api rollout status "deployment/$APP" --timeout=180s
+kubectl --context=docker-desktop -n deploy-api get deployment,service,replicasets,pods \
+  -l "app.kubernetes.io/name=$APP" -o yaml
+```
+
+PATCH accepts one JSON object containing only a nonempty `image`. It returns `202`, `name`, `statusUrl`, and `Location` after Kubernetes accepts the Deployment change. It does not wait for readiness. An identical reference returns the same accepted response without a Kubernetes write or a generation increment.
+
+The operation changes the container named `app` in the fetched Deployment and preserves its other configuration. It never writes the Service. Kubernetes checks the Deployment resource version and rejects an intervening change with `409`; inspect the app before retrying. Both resources must be managed by this API, present, and not deleting. A partial, unmanaged, or deleting app returns `409`. Two absent resources return `404`. Reads and the update share the ordinary ten-second operation budget. An upstream timeout can leave the write outcome unknown; inspect before retrying.
+
+Inspect the requested generation after a failed update. An old Pod can still serve through the stable Service while `ready=false` describes the new rollout. Use a valid image reference to recover. The API does not roll back automatically.
+
+## PR-09 acceptance evidence map
+
+Each row separates offline HTTP or application evidence from Kubernetes controller evidence. The named tests run with `go test ./...` and do not read real kubeconfig. Local live evidence is retained under the primary checkout's ignored `.scratch/pr09/` directory. Formal independent verification and media review remain separate gates.
+
+| Spec criterion | Offline evidence | Real Kubernetes evidence |
+| --- | --- | --- |
+| 1. Two named apps and resource intent | `TestCreateResourceIntent`, `TestCreateSuccessAndDuplicate` | `verify_live.py` creates two immutable-digest nginx apps and waits for each requested rollout. Captured Deployment, Service, ReplicaSet, and Pod objects identify labels and controller ownership. |
+| 2. Access through Services | Resource-intent tests verify Service target ports and the TCP probe. | Separate Service port-forwards return successful HTTP responses from each app. |
+| 3. Readiness and failure diagnosis | `TestInspectRequestedRolloutReadiness`, `TestInspectContainerStates` | The driver records pull-failure waiting reasons and a running wrong-port container with `Unhealthy` warnings. It compares API output with kubectl and observes `ProgressDeadlineExceeded` for the wrong-port rollout. |
+| 4. Image updates and recovery | `TestImageUpdateChangesOnlyNamedContainerImage`, `TestImageUpdateIdenticalReferenceDoesNotWrite`, `TestImageUpdateOldHealthyAndNewUnready`, `TestInspectFailedReplacementAndRecovery` | Ten healthy updates preserve Service identity. A missing-image update remains unready while the old app serves. A valid image update recovers. |
+| 5. Selected Pod logs and disconnect | The accumulated logs HTTP and controlled-upstream tests cover selection, transport lifetime, and cancellation. | A 20-second selected-Pod stream delivers access markers before and after 15 seconds, matching kubectl logs. |
+| 6. Partial creation, invalid requests, and isolation | `TestPartialCreateListInspectAndDeleteThroughHTTP` follows a controlled Service-creation failure through list, inspect, update rejection, and deletion. `TestCreateValidation` and `TestCreateCollisionDoesNotWrite` cover invalid and duplicate requests. | Duplicate creation returns `409`. Deleting one app leaves the second app ready and accessible. Service-creation failure remains controlled-client evidence. |
+| 7. Restart discovery and upstream errors | Startup, list, inspect, and transport-error tests cover unavailable or denied upstreams. | Both real apps remain discoverable and inspectable after the API process restarts. |
+| 8. Delete and cleanup | `TestDeletePresenceAndOwnership`, `TestDeleteRacePreconditionsPreserveChangedResource` | The driver checks fixture UIDs before deletion, waits for owned resources to disappear, repeats deletion, and checks the namespace and pre-existing apps. |
+| 9. Crashing process | `TestInspectContainerStates` preserves restart counts and last termination state. | The verified postgres fixture exits with code `1`, restarts, and enters `CrashLoopBackOff`. Previous-instance logs identify missing `POSTGRES_PASSWORD`. |
+| 10. Container budgets and checks | `TestCreateResourceIntent` and image-only mutation tests assert retained configuration. | Captured specs compare creation and replacement configuration across every healthy update. Offline tests, race detection, vet, and build provide separate application checks. |
+
+
+## PR-09 local verification
+
+Offline checks passed on 2026-10-23. `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./...` passed. Go formatting and `git diff --check` were clean. The default suite reads no real kubeconfig. Controlled HTTP tests cover stale resource versions, Deployment removal between the read and update, retained fields, identical-reference no-writes, per-stage error mapping, shared deadlines, and cancellation. A Deployment that disappears during the update returns `409`, because the previously observed Service can leave a partial app.
+
+Two Docker Desktop Kubernetes `v1.34.1` runs each completed ten alternating healthy-image updates and the image-only preservation checks. The initial run completed 105 checks and retained all pre-existing app UIDs. After the deletion-race correction, the final build completed 104 checks through fixture deletion, including the additional live budget and stalled-rollout checks. The final global inventory-preservation assertion failed because pre-existing PR07 resources disappeared during the run; a PR08 Service also disappeared between subsequent snapshots. The captured driver issues app mutations only for its isolated PR09 fixture names, and its kubectl command log contains no mutations. Concurrent outside activity is inferred, not established by an API audit. The final global inventory-preservation result is therefore inconclusive. Fixture-to-fixture isolation passed. A separate final snapshot confirms all PR09 resources are gone and the namespace remains. The original failure transcript is retained.
+
+The final ten healthy updates accepted in at most 174.07 ms and reached requested-rollout readiness in at most 21.30 seconds. Both met the proposed absolute budgets. These are local end-to-end acceptance measurements, not a speedup claim. Trunk returns `404` for PATCH, so its response latency is not compared with a successful update. The driver samples current Deployment status and HTTP through a Service port-forward once per polling cycle. It recorded 55 successful HTTP samples and ten unavailable-forward samples as selected Pods changed. A broken forward does not establish Service downtime, and these samples do not promise uninterrupted availability. Compilation, manifest inspection, and initial image setup are outside the update samples. The eight-core host had unrelated active workloads.
+
+The final build exposed a new pull failure with `ready=false` while the surviving old Pod remained accessible, then recovered with a valid image. A running wrong-port fixture exposed `Unhealthy` warnings and `ProgressDeadlineExceeded`. The postgres fixture exposed exit code `1`, restarts, and `CrashLoopBackOff`, with the expected missing-password message in previous-instance logs. A 20-second selected-Pod log stream delivered both early and late access markers, matching kubectl. API restart discovery, repeated deletion, and isolation between the two PR09 apps passed.
+
+All successful fixtures used inspected immutable image-index references with linux/arm64 manifests:
+
+- Stable nginx used `docker.io/library/nginx@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951`.
+- Mainline nginx used `docker.io/library/nginx@sha256:a3554c0d0b48177b1413c26e01f695334428020d9df01243fbae3e11cfd17417`.
+- The crashing postgres fixture used `docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94`.
+
+The primary checkout's ignored `.scratch/pr09/` directory retains the rerunnable `verify_live.py`, raw command and HTTP logs, initial and final results, image inspections, source hashes, gate exit-code receipts, and native review reports. Build overlays changed only the verification listener to port 18080. Production still binds port 8080. The first controlled transport run failed because its JSON mock did not request JSON from client-go; the fixture was corrected and aggregate tests passed. That failed output remains recorded separately.
+
+Native source review found and corrected the deletion race, and final review found no remaining source blockers. Deslop and comment audits found no flags. Grok was unavailable and Claude was unauthenticated; their receipts are retained. Cross-provider review, the prescribed independent swarm, terminal screenshots, video, CI, and operator merge review remain open. The shared-cluster inventory check also needs a quiet-cluster rerun before claiming the plan's formal clean verdict. This PR does not authorize merging.
